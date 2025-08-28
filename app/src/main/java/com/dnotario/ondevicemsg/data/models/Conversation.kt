@@ -7,8 +7,18 @@ data class Conversation(
     val messageCount: Int,
     val unreadCount: Int,
     val lastMessageTime: Long,
-    val lastMessageText: String?
+    val lastMessageText: String?,
+    val lastMessageIsOutgoing: Boolean = false
 ) {
+    // Custom equals to only compare fields that matter for UI updates
+    fun hasContentChanges(other: Conversation?): Boolean {
+        if (other == null) return true
+        return lastMessageTime != other.lastMessageTime ||
+               lastMessageText != other.lastMessageText ||
+               unreadCount != other.unreadCount ||
+               lastMessageIsOutgoing != other.lastMessageIsOutgoing
+    }
+    
     fun getDisplayName(): String {
         return contactName ?: formatPhoneNumber(address)
     }

@@ -17,7 +17,7 @@ import com.dnotario.ondevicemsg.data.models.Conversation
 import com.dnotario.ondevicemsg.data.repository.SmsRepository
 
 sealed class Screen(val route: String, val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    object Messages : Screen("messages", "Messages", Icons.Default.Message)
+    object Messages : Screen("messages", "Conversations", Icons.Default.Message)
     object Demo : Screen("demo", "Demo", Icons.Default.Science)
 }
 
@@ -38,7 +38,14 @@ fun MainScreen(
     asrEnabled: Boolean,
     useOnlineRecognition: Boolean,
     recognizerState: String,
-    hasSmsPermissions: Boolean
+    hasSmsPermissions: Boolean,
+    showReplyDialog: Boolean,
+    replyTranscription: String,
+    currentReplyConversation: Conversation?,
+    onSendReply: (String) -> Unit,
+    onRetryReply: () -> Unit,
+    onDismissReply: () -> Unit,
+    refreshTrigger: Int = 0
 ) {
     val navController = rememberNavController()
     val items = listOf(Screen.Messages, Screen.Demo)
@@ -78,7 +85,8 @@ fun MainScreen(
                     MessagesScreen(
                         smsRepository = smsRepository,
                         onPlayMessage = onPlayMessage,
-                        onReplyToMessage = onReplyToMessage
+                        onReplyToMessage = onReplyToMessage,
+                        refreshTrigger = refreshTrigger
                     )
                 } else {
                     PermissionRequestScreen()
@@ -101,6 +109,20 @@ fun MainScreen(
                 )
             }
         }
+    }
+    
+    // Show voice reply dialog when needed
+    if (showReplyDialog && currentReplyConversation != null) {
+        VoiceReplyDialog(
+            recipientName = currentReplyConversation.contactName ?: currentReplyConversation.getDisplayName(),
+            recipientNumber = currentReplyConversation.address,
+            isRecording = isRecording,
+            transcribedText = replyTranscription,
+            recognizerState = recognizerState,
+            onSend = onSendReply,
+            onRetry = onRetryReply,
+            onDismiss = onDismissReply
+        )
     }
 }
 

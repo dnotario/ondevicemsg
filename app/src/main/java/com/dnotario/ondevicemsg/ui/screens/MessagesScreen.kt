@@ -24,21 +24,65 @@ fun MessagesScreen(
     smsRepository: SmsRepository,
     onPlayMessage: (Conversation) -> Unit,
     onReplyToMessage: (Conversation) -> Unit,
+    refreshTrigger: Int = 0,
     modifier: Modifier = Modifier
 ) {
-    var conversations by remember { mutableStateOf<List<Conversation>>(emptyList()) }
+    var conversations by remember { mutableStateOf<Map<Long, Conversation>>(emptyMap()) }
     var isLoading by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     
+    // Initial load
     LaunchedEffect(Unit) {
-        scope.launch {
-            isLoading = true
+        isLoading = true
+        try {
+            val convList = smsRepository.getConversations()
+            conversations = convList.associateBy { it.threadId }
+        } catch (e: Exception) {
+            // Handle error
+        } finally {
+            isLoading = false
+        }
+    }
+    
+    // Update only changed conversations
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(3000) // Check every 3 seconds
             try {
-                conversations = smsRepository.getConversations()
+                val newConversations = smsRepository.getConversations()
+                
+                // Build a new map, preserving unchanged conversations
+                val updatedMap = conversations.toMutableMap()
+                
+                newConversations.forEach { newConv ->
+                    val existing = updatedMap[newConv.threadId]
+                    // Only update if content actually changed
+                    if (newConv.hasContentChanges(existing)) {
+                        updatedMap[newConv.threadId] = newConv
+                    }
+                }
+                
+                // Remove deleted conversations
+                val currentThreadIds = newConversations.map { it.threadId }.toSet()
+                updatedMap.keys.retainAll(currentThreadIds)
+                
+                if (updatedMap != conversations) {
+                    conversations = updatedMap
+                }
             } catch (e: Exception) {
                 // Handle error
-            } finally {
-                isLoading = false
+            }
+        }
+    }
+    
+    // Force refresh when explicitly triggered (e.g., after sending)
+    LaunchedEffect(refreshTrigger) {
+        if (refreshTrigger > 0) {
+            try {
+                val convList = smsRepository.getConversations()
+                conversations = convList.associateBy { it.threadId }
+            } catch (e: Exception) {
+                // Handle error
             }
         }
     }
@@ -47,7 +91,7 @@ fun MessagesScreen(
         modifier = modifier.fillMaxSize()
     ) {
         Text(
-            text = "Messages",
+            text = "Conversations",
             style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.padding(16.dp)
         )
@@ -70,12 +114,19 @@ fun MessagesScreen(
                 )
             }
         } else {
+            val sortedConversations = remember(conversations) {
+                conversations.values.sortedByDescending { it.lastMessageTime }
+            }
+            
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                items(conversations) { conversation ->
+                items(
+                    items = sortedConversations,
+                    key = { it.threadId } // Use stable keys for better recomposition
+                ) { conversation ->
                     ConversationCard(
                         conversation = conversation,
                         onPlay = { onPlayMessage(conversation) },
@@ -131,7 +182,11 @@ fun ConversationCard(
                     Spacer(modifier = Modifier.height(4.dp))
                     
                     Text(
-                        text = conversation.lastMessageText ?: "No messages",
+                        text = if (conversation.lastMessageIsOutgoing) {
+                            "You: ${conversation.lastMessageText ?: "No messages"}"
+                        } else {
+                            conversation.lastMessageText ?: "No messages"
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,

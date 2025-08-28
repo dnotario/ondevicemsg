@@ -86,7 +86,8 @@ class SmsRepository(private val context: Context) {
                             messageCount = messages.size,
                             unreadCount = unreadCount,
                             lastMessageTime = lastMessage.date,
-                            lastMessageText = lastMessage.body
+                            lastMessageText = lastMessage.body,
+                            lastMessageIsOutgoing = lastMessage.isOutgoing
                         )
                     }
                 }

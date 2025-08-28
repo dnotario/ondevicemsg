@@ -33,6 +33,7 @@ import com.dnotario.ondevicemsg.ui.screens.MainScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.util.*
 
 class MainActivity : ComponentActivity() {
@@ -46,6 +47,12 @@ class MainActivity : ComponentActivity() {
     private var hasContactsPermission by mutableStateOf(false)
     private var useOnlineRecognition by mutableStateOf(false) // Default to offline
     private var recognizerState by mutableStateOf("Idle")
+    
+    // Reply dialog state
+    private var showReplyDialog by mutableStateOf(false)
+    private var replyTranscription by mutableStateOf("")
+    private var currentReplyConversation by mutableStateOf<Conversation?>(null)
+    private var conversationRefreshTrigger by mutableStateOf(0)
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -116,7 +123,14 @@ class MainActivity : ComponentActivity() {
                     asrEnabled = hasRecordPermission && speechRecognizer != null,
                     useOnlineRecognition = useOnlineRecognition,
                     recognizerState = recognizerState,
-                    hasSmsPermissions = hasSmsPermissions
+                    hasSmsPermissions = hasSmsPermissions,
+                    showReplyDialog = showReplyDialog,
+                    replyTranscription = replyTranscription,
+                    currentReplyConversation = currentReplyConversation,
+                    onSendReply = ::sendReply,
+                    onRetryReply = ::retryReply,
+                    onDismissReply = ::dismissReplyDialog,
+                    refreshTrigger = conversationRefreshTrigger
                 )
             }
         }
@@ -228,13 +242,19 @@ class MainActivity : ComponentActivity() {
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (!matches.isNullOrEmpty()) {
-                    recognizedText = if (recognizedText.isEmpty()) {
-                        matches[0]
+                    if (showReplyDialog) {
+                        // Update reply transcription with final results
+                        replyTranscription = matches[0]
+                        recognizerState = "Ready to send"
                     } else {
-                        "$recognizedText ${matches[0]}"
+                        recognizedText = if (recognizedText.isEmpty()) {
+                            matches[0]
+                        } else {
+                            "$recognizedText ${matches[0]}"
+                        }
+                        recognizerState = "Recognized: \"${matches[0]}\""
                     }
                     Log.d("ASR", "Final results: ${matches[0]}")
-                    recognizerState = "Recognized: \"${matches[0]}\""
                 } else {
                     recognizerState = "No results"
                 }
@@ -247,7 +267,13 @@ class MainActivity : ComponentActivity() {
                 val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (!matches.isNullOrEmpty()) {
                     Log.d("ASR", "Partial results: ${matches[0]}")
-                    recognizerState = "Hearing: \"${matches[0]}\""
+                    if (showReplyDialog) {
+                        // Update reply transcription with partial results
+                        replyTranscription = matches[0]
+                        recognizerState = "Hearing..."
+                    } else {
+                        recognizerState = "Hearing: \"${matches[0]}\""
+                    }
                 }
             }
 
@@ -369,7 +395,11 @@ class MainActivity : ComponentActivity() {
                 
                 val contactName = conversation.contactName ?: conversation.address
                 messagesToPlay.forEach { message ->
-                    val textToSpeak = "$contactName says: ${message.body}"
+                    val textToSpeak = if (message.isOutgoing) {
+                        "You said: ${message.body}" // Sent message
+                    } else {
+                        "$contactName says: ${message.body}" // Received message
+                    }
                     speakText(textToSpeak)
                     Thread.sleep(100) // Small delay between messages
                 }
@@ -385,8 +415,95 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun replyToConversation(conversation: Conversation) {
-        // TODO: Will implement voice reply dialog in next phase
-        Log.d("MainActivity", "Reply to ${conversation.address}")
+        currentReplyConversation = conversation
+        replyTranscription = ""
+        recognizerState = "Initializing..."
+        showReplyDialog = true
+        
+        // Start recording automatically when dialog opens
+        CoroutineScope(Dispatchers.Main).launch {
+            kotlinx.coroutines.delay(500) // Small delay for dialog to open
+            startReplyRecording()
+        }
+    }
+    
+    private fun startReplyRecording() {
+        if (!hasRecordPermission) {
+            recognizerState = "No microphone permission"
+            return
+        }
+        
+        if (speechRecognizer == null) {
+            recognizerState = "Recognizer not available"
+            return
+        }
+        
+        // Stop any TTS that might be playing
+        tts.stop()
+        
+        replyTranscription = ""
+        startListening()
+    }
+    
+    private fun sendReply(messageText: String) {
+        val conversation = currentReplyConversation ?: return
+        val message = messageText.trim()
+        
+        if (message.isNotEmpty()) {
+            // Stop recording if still active
+            if (isListening) {
+                stopListening()
+            }
+            
+            // Send the SMS
+            val smsRepository = SmsRepository(this)
+            smsRepository.sendSms(conversation.address, message)
+            
+            // Speak confirmation
+            speakText("Message sent to ${conversation.contactName ?: conversation.address}")
+            
+            // Close dialog
+            showReplyDialog = false
+            replyTranscription = ""
+            currentReplyConversation = null
+            recognizerState = "Idle"
+            
+            // Trigger conversation list refresh
+            conversationRefreshTrigger++
+            
+            Log.d("MainActivity", "Sent SMS to ${conversation.address}: $message")
+        }
+    }
+    
+    private fun retryReply() {
+        // Stop current recording if active
+        if (isListening) {
+            stopListening()
+            // Small delay before restarting
+            CoroutineScope(Dispatchers.Main).launch {
+                kotlinx.coroutines.delay(200)
+                replyTranscription = ""
+                recognizerState = "Initializing..."
+                startReplyRecording()
+            }
+        } else {
+            // Clear transcription and start fresh
+            replyTranscription = ""
+            recognizerState = "Initializing..."
+            startReplyRecording()
+        }
+    }
+    
+    private fun dismissReplyDialog() {
+        // Stop recording if active
+        if (isListening) {
+            stopListening()
+        }
+        
+        showReplyDialog = false
+        replyTranscription = ""
+        currentReplyConversation = null
+        recognizerState = "Idle"
     }
 
     override fun onDestroy() {
