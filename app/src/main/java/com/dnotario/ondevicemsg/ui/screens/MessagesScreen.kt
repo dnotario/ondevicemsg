@@ -47,7 +47,7 @@ fun MessagesScreen(
     // Update only changed conversations
     LaunchedEffect(Unit) {
         while (true) {
-            kotlinx.coroutines.delay(3000) // Check every 3 seconds
+            kotlinx.coroutines.delay(10000) // Check every 10 seconds
             try {
                 val newConversations = smsRepository.getConversations()
                 

@@ -13,25 +13,35 @@ import com.dnotario.ondevicemsg.data.models.Message
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+// Helper data class for intermediate storage
+private data class ConversationData(
+    val threadId: Long,
+    val address: String,
+    val date: Long,
+    val snippet: String,
+    val messageCount: Int,
+    val unreadCount: Int,
+    val lastMessageIsOutgoing: Boolean
+)
+
 class SmsRepository(private val context: Context) {
     
     private val contentResolver: ContentResolver = context.contentResolver
     private val contactCache = mutableMapOf<String, String>()
     
     suspend fun getConversations(): List<Conversation> = withContext(Dispatchers.IO) {
-        val conversations = mutableMapOf<Long, Conversation>()
+        val conversations = mutableListOf<Conversation>()
         
         try {
-            // Query SMS inbox and sent messages
+            // Get all SMS messages, we'll group them ourselves
             val uri = Uri.parse("content://sms")
             val projection = arrayOf(
-                "_id",
                 "thread_id",
-                "address",
+                "address", 
                 "body",
                 "date",
-                "read",
-                "type"
+                "type",
+                "read"
             )
             
             val cursor = contentResolver.query(
@@ -42,61 +52,64 @@ class SmsRepository(private val context: Context) {
                 "date DESC"
             )
             
-            cursor?.use {
-                val threadMessages = mutableMapOf<Long, MutableList<Message>>()
+            cursor?.use { 
+                val phoneNumbers = mutableSetOf<String>()
+                val threadDataMap = mutableMapOf<Long, ConversationData>()
+                val threadIds = mutableSetOf<Long>()
                 
                 while (it.moveToNext()) {
                     val threadId = it.getLong(it.getColumnIndexOrThrow("thread_id"))
-                    val address = it.getString(it.getColumnIndexOrThrow("address"))
-                    if (address == null) continue
                     
+                    // Only process each thread once (we get the most recent message)
+                    if (threadId in threadIds) continue
+                    threadIds.add(threadId)
+                    
+                    val address = it.getString(it.getColumnIndexOrThrow("address")) ?: continue
                     val body = it.getString(it.getColumnIndexOrThrow("body")) ?: ""
                     val date = it.getLong(it.getColumnIndexOrThrow("date"))
-                    val isRead = it.getInt(it.getColumnIndexOrThrow("read")) == 1
                     val type = it.getInt(it.getColumnIndexOrThrow("type"))
-                    val id = it.getLong(it.getColumnIndexOrThrow("_id"))
+                    val isRead = it.getInt(it.getColumnIndexOrThrow("read")) == 1
                     
-                    val message = Message(
-                        id = id,
+                    phoneNumbers.add(address)
+                    
+                    threadDataMap[threadId] = ConversationData(
                         threadId = threadId,
                         address = address,
-                        body = body,
                         date = date,
-                        isRead = isRead,
-                        isOutgoing = type == Message.TYPE_SENT
+                        snippet = body,
+                        messageCount = 0, // We'll skip this for speed
+                        unreadCount = if (!isRead && type == Message.TYPE_INBOX) 1 else 0,
+                        lastMessageIsOutgoing = type == Message.TYPE_SENT
                     )
                     
-                    if (!threadMessages.containsKey(threadId)) {
-                        threadMessages[threadId] = mutableListOf()
-                    }
-                    threadMessages[threadId]?.add(message)
+                    // Only load first 15 conversations for speed
+                    if (threadDataMap.size >= 15) break
                 }
                 
-                // Create conversations from grouped messages
-                threadMessages.forEach { (threadId, messages) ->
-                    if (messages.isNotEmpty()) {
-                        val lastMessage = messages.first() // Already sorted by date DESC
-                        val address = lastMessage.address
-                        val unreadCount = messages.count { !it.isRead && !it.isOutgoing }
-                        
-                        conversations[threadId] = Conversation(
-                            threadId = threadId,
-                            address = address,
-                            contactName = getContactName(address),
-                            messageCount = messages.size,
-                            unreadCount = unreadCount,
-                            lastMessageTime = lastMessage.date,
-                            lastMessageText = lastMessage.body,
-                            lastMessageIsOutgoing = lastMessage.isOutgoing
+                // Batch load contact names (this is fast)
+                val contactNames = batchLoadContactNames(phoneNumbers)
+                
+                // Build conversation list
+                threadDataMap.values.sortedByDescending { it.date }.forEach { data ->
+                    conversations.add(
+                        Conversation(
+                            threadId = data.threadId,
+                            address = data.address,
+                            contactName = contactNames[data.address],
+                            messageCount = data.messageCount,
+                            unreadCount = data.unreadCount,
+                            lastMessageTime = data.date,
+                            lastMessageText = data.snippet,
+                            lastMessageIsOutgoing = data.lastMessageIsOutgoing
                         )
-                    }
+                    )
                 }
             }
         } catch (e: Exception) {
             Log.e("SmsRepository", "Error loading conversations", e)
         }
         
-        conversations.values.sortedByDescending { it.lastMessageTime }
+        conversations
     }
     
     suspend fun getMessagesForConversation(threadId: Long): List<Message> = withContext(Dispatchers.IO) {
@@ -191,6 +204,112 @@ class SmsRepository(private val context: Context) {
         } catch (e: Exception) {
             Log.e("SmsRepository", "Error sending SMS", e)
         }
+    }
+    
+    private fun getAddressForThread(threadId: Long): String? {
+        try {
+            val uri = Uri.parse("content://sms")
+            val cursor = contentResolver.query(
+                uri,
+                arrayOf("address"),
+                "thread_id = ?",
+                arrayOf(threadId.toString()),
+                "date DESC LIMIT 1"
+            )
+            
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    return it.getString(0)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error getting address for thread $threadId", e)
+        }
+        return null
+    }
+    
+    private fun checkLastMessageIsOutgoing(threadId: Long): Boolean {
+        try {
+            val uri = Uri.parse("content://sms")
+            val cursor = contentResolver.query(
+                uri,
+                arrayOf("type"),
+                "thread_id = ?",
+                arrayOf(threadId.toString()),
+                "date DESC LIMIT 1"
+            )
+            
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val type = it.getInt(0)
+                    return type == Message.TYPE_SENT
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error checking last message type", e)
+        }
+        return false
+    }
+    
+    private fun getUnreadCount(threadId: Long): Int {
+        try {
+            val uri = Uri.parse("content://sms")
+            val cursor = contentResolver.query(
+                uri,
+                arrayOf("COUNT(*) as count"),
+                "thread_id = ? AND read = 0 AND type = ${Message.TYPE_INBOX}",
+                arrayOf(threadId.toString()),
+                null
+            )
+            
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    return it.getInt(0)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error getting unread count", e)
+        }
+        return 0
+    }
+    
+    private fun batchLoadContactNames(phoneNumbers: Set<String>): Map<String, String> {
+        val contactNames = mutableMapOf<String, String>()
+        
+        // Return cached names first
+        phoneNumbers.forEach { number ->
+            contactCache[number]?.let { 
+                contactNames[number] = it 
+            }
+        }
+        
+        // Get uncached numbers
+        val uncachedNumbers = phoneNumbers - contactNames.keys
+        if (uncachedNumbers.isEmpty()) return contactNames
+        
+        // For phone numbers not found in batch, try individual lookups
+        uncachedNumbers.forEach { phoneNumber ->
+            try {
+                val uri = Uri.withAppendedPath(
+                    ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                    Uri.encode(phoneNumber)
+                )
+                
+                val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                
+                contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val name = cursor.getString(0)
+                        contactNames[phoneNumber] = name
+                        contactCache[phoneNumber] = name
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("SmsRepository", "Error loading contact name for $phoneNumber", e)
+            }
+        }
+        
+        return contactNames
     }
     
     private fun getContactName(phoneNumber: String): String? {
