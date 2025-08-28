@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Science
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -52,7 +53,20 @@ fun MainScreen(
     val navController = rememberNavController()
     val items = listOf(Screen.Messages, Screen.Demo)
     
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Main content with potential blur
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (showReplyDialog) {
+                        Modifier.blur(radius = 5.dp) // Apply subtle blur when dialog is shown
+                    } else {
+                        Modifier
+                    }
+                )
+        ) {
+            Scaffold(
         bottomBar = {
             NavigationBar {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -114,20 +128,22 @@ fun MainScreen(
             }
         }
     }
-    
-    // Show voice reply dialog when needed
-    if (showReplyDialog && currentReplyConversation != null) {
-        VoiceReplyDialog(
-            recipientName = currentReplyConversation.contactName ?: currentReplyConversation.getDisplayName(),
-            recipientNumber = currentReplyConversation.address,
-            isRecording = isRecording,
-            transcribedText = replyTranscription,
-            recognizerState = recognizerState,
-            onSend = onSendReply,
-            onRetry = onRetryReply,
-            onDismiss = onDismissReply
-        )
-    }
+        } // Close Box with blur
+        
+        // Show voice reply dialog when needed
+        if (showReplyDialog && currentReplyConversation != null) {
+            VoiceReplyDialog(
+                recipientName = currentReplyConversation.contactName ?: currentReplyConversation.getDisplayName(),
+                recipientNumber = currentReplyConversation.address,
+                isRecording = isRecording,
+                transcribedText = replyTranscription,
+                recognizerState = recognizerState,
+                onSend = onSendReply,
+                onRetry = onRetryReply,
+                onDismiss = onDismissReply
+            )
+        }
+    } // Close outer Box
 }
 
 @Composable
