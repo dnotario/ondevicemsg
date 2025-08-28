@@ -27,6 +27,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.dnotario.ondevicemsg.ui.theme.OndevicemsgTheme
+import com.dnotario.ondevicemsg.data.repository.SmsRepository
+import com.dnotario.ondevicemsg.data.models.Conversation
+import com.dnotario.ondevicemsg.ui.screens.MainScreen
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.util.*
 
 class MainActivity : ComponentActivity() {
@@ -36,6 +42,8 @@ class MainActivity : ComponentActivity() {
     private var isListening by mutableStateOf(false)
     private var recognizedText by mutableStateOf("")
     private var hasRecordPermission by mutableStateOf(false)
+    private var hasSmsPermissions by mutableStateOf(false)
+    private var hasContactsPermission by mutableStateOf(false)
     private var useOnlineRecognition by mutableStateOf(false) // Default to offline
     private var recognizerState by mutableStateOf("Idle")
 
@@ -43,6 +51,16 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         hasRecordPermission = isGranted
+    }
+    
+    private val requestMultiplePermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        hasSmsPermissions = permissions[Manifest.permission.READ_SMS] == true &&
+                permissions[Manifest.permission.SEND_SMS] == true
+        hasContactsPermission = permissions[Manifest.permission.READ_CONTACTS] == true
+        
+        Log.d("Permissions", "SMS permissions: $hasSmsPermissions, Contacts: $hasContactsPermission")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,6 +76,9 @@ class MainActivity : ComponentActivity() {
         if (!hasRecordPermission) {
             requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
+        
+        // Check for SMS and Contacts permissions
+        checkAndRequestSmsPermissions()
 
         // Initialize TTS
         tts = TextToSpeech(this) { status ->
@@ -73,27 +94,30 @@ class MainActivity : ComponentActivity() {
         // Initialize Speech Recognizer (default to on-device if available)
         initializeSpeechRecognizer()
 
+        val smsRepository = SmsRepository(this)
+        
         setContent {
             OndevicemsgTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    MessagingTestUI(
-                        modifier = Modifier.padding(innerPadding),
-                        onTtsClick = ::speakText,
-                        onRecordClick = ::toggleRecording,
-                        onClearClick = { 
+                MainScreen(
+                    smsRepository = smsRepository,
+                    onTtsClick = ::speakText,
+                    onRecordClick = ::toggleRecording,
+                    onClearClick = { 
                         recognizedText = ""
                         recognizerState = "Cleared"
                     },
-                        onOnlineModeChanged = ::handleOnlineModeChange,
-                        onOpenLanguageSettings = ::openLanguageSettings,
-                        isRecording = isListening,
-                        recognizedText = recognizedText,
-                        ttsEnabled = ttsInitialized,
-                        asrEnabled = hasRecordPermission && speechRecognizer != null,
-                        useOnlineRecognition = useOnlineRecognition,
-                        recognizerState = recognizerState
-                    )
-                }
+                    onOnlineModeChanged = ::handleOnlineModeChange,
+                    onOpenLanguageSettings = ::openLanguageSettings,
+                    onPlayMessage = ::playConversation,
+                    onReplyToMessage = ::replyToConversation,
+                    isRecording = isListening,
+                    recognizedText = recognizedText,
+                    ttsEnabled = ttsInitialized,
+                    asrEnabled = hasRecordPermission && speechRecognizer != null,
+                    useOnlineRecognition = useOnlineRecognition,
+                    recognizerState = recognizerState,
+                    hasSmsPermissions = hasSmsPermissions
+                )
             }
         }
     }
@@ -296,217 +320,79 @@ class MainActivity : ComponentActivity() {
             Log.e("Settings", "Could not open language settings directly", e)
         }
     }
+    
+    private fun checkAndRequestSmsPermissions() {
+        val smsPermissionsGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.READ_SMS
+        ) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            this, Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        
+        val contactsPermissionGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        
+        hasSmsPermissions = smsPermissionsGranted
+        hasContactsPermission = contactsPermissionGranted
+        
+        val permissionsToRequest = mutableListOf<String>()
+        if (!smsPermissionsGranted) {
+            permissionsToRequest.add(Manifest.permission.READ_SMS)
+            permissionsToRequest.add(Manifest.permission.SEND_SMS)
+            permissionsToRequest.add(Manifest.permission.RECEIVE_SMS)
+        }
+        if (!contactsPermissionGranted) {
+            permissionsToRequest.add(Manifest.permission.READ_CONTACTS)
+        }
+        
+        if (permissionsToRequest.isNotEmpty()) {
+            requestMultiplePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
+        }
+    }
+
+    private fun playConversation(conversation: Conversation) {
+        val smsRepository = SmsRepository(this)
+        
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val messages = smsRepository.getMessagesForConversation(conversation.threadId)
+                val unreadMessages = messages.filter { !it.isRead && !it.isOutgoing }
+                
+                val messagesToPlay = if (unreadMessages.isNotEmpty()) {
+                    // Play all unread messages
+                    unreadMessages.reversed() // Oldest first
+                } else {
+                    // Play just the last message
+                    messages.take(1)
+                }
+                
+                val contactName = conversation.contactName ?: conversation.address
+                messagesToPlay.forEach { message ->
+                    val textToSpeak = "$contactName says: ${message.body}"
+                    speakText(textToSpeak)
+                    Thread.sleep(100) // Small delay between messages
+                }
+                
+                // Mark messages as read after playing
+                if (unreadMessages.isNotEmpty()) {
+                    smsRepository.markMessagesAsRead(conversation.threadId)
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error playing conversation", e)
+            }
+        }
+    }
+    
+    private fun replyToConversation(conversation: Conversation) {
+        // TODO: Will implement voice reply dialog in next phase
+        Log.d("MainActivity", "Reply to ${conversation.address}")
+    }
 
     override fun onDestroy() {
         super.onDestroy()
         tts.stop()
         tts.shutdown()
         speechRecognizer?.destroy()
-    }
-}
-
-@Composable
-fun MessagingTestUI(
-    modifier: Modifier = Modifier,
-    onTtsClick: (String) -> Unit,
-    onRecordClick: () -> Unit,
-    onClearClick: () -> Unit,
-    onOnlineModeChanged: (Boolean) -> Unit,
-    onOpenLanguageSettings: () -> Unit,
-    isRecording: Boolean,
-    recognizedText: String,
-    ttsEnabled: Boolean,
-    asrEnabled: Boolean,
-    useOnlineRecognition: Boolean,
-    recognizerState: String
-) {
-    var inputText by remember { mutableStateOf("") }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(
-            text = "On-Device TTS & ASR Test",
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Center
-        )
-
-        Card(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "Text to Speech",
-                    style = MaterialTheme.typography.titleMedium
-                )
-
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    label = { Text("Enter text to speak") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                    maxLines = 4
-                )
-
-                Button(
-                    onClick = { onTtsClick(inputText) },
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                    enabled = ttsEnabled && inputText.isNotEmpty()
-                ) {
-                    Text("Speak Text")
-                }
-
-                if (!ttsEnabled) {
-                    Text(
-                        text = "TTS initializing...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Speech Recognition",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = when {
-                                recognizerState.startsWith("Error") -> MaterialTheme.colorScheme.errorContainer
-                                recognizerState.startsWith("Recognized") -> MaterialTheme.colorScheme.primaryContainer
-                                recognizerState.startsWith("Hearing") || recognizerState == "Listening..." -> MaterialTheme.colorScheme.secondaryContainer
-                                else -> MaterialTheme.colorScheme.surfaceVariant
-                            }
-                        )
-                    ) {
-                        Text(
-                            text = recognizerState,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            color = when {
-                                recognizerState.startsWith("Error") -> MaterialTheme.colorScheme.onErrorContainer
-                                recognizerState.startsWith("Recognized") -> MaterialTheme.colorScheme.onPrimaryContainer
-                                recognizerState.startsWith("Hearing") || recognizerState == "Listening..." -> MaterialTheme.colorScheme.onSecondaryContainer
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        )
-                    }
-                }
-
-                OutlinedTextField(
-                    value = recognizedText,
-                    onValueChange = { },
-                    label = { Text("Recognized text will appear here") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3,
-                    maxLines = 6,
-                    readOnly = true
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = onRecordClick,
-                        enabled = asrEnabled,
-                        colors = if (isRecording) {
-                            ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            )
-                        } else {
-                            ButtonDefaults.buttonColors()
-                        }
-                    ) {
-                        Text(if (isRecording) "Stop Recording" else "Start Recording")
-                    }
-                    
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = useOnlineRecognition,
-                            onCheckedChange = onOnlineModeChanged,
-                            enabled = !isRecording
-                        )
-                        Text(
-                            text = "Allow Online",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-
-                if (!asrEnabled) {
-                    Text(
-                        text = "ASR not available or permission denied",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-
-                if (isRecording) {
-                    Text(
-                        text = "🎤 Recording... (will stop on silence)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                
-                Text(
-                    text = if (useOnlineRecognition) "Mode: Online/Offline" else "Mode: On-Device Only",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                
-                // Show button to download language if unavailable
-                if (recognizerState.contains("Language unavailable") && !useOnlineRecognition) {
-                    OutlinedButton(
-                        onClick = onOpenLanguageSettings,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Download Offline Language Pack")
-                    }
-                    Text(
-                        text = "Go to: Languages & input → On-device speech recognition → Download English",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
-
-        Button(
-            onClick = onClearClick,
-            modifier = Modifier.align(Alignment.CenterHorizontally),
-            enabled = recognizedText.isNotEmpty()
-        ) {
-            Text("Clear Recognized Text")
-        }
     }
 }
