@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,7 +24,9 @@ import java.util.*
 fun MessagesScreen(
     smsRepository: SmsRepository,
     onPlayMessage: (Conversation) -> Unit,
+    onStopPlaying: () -> Unit,
     onReplyToMessage: (Conversation) -> Unit,
+    currentlyPlayingThreadId: Long? = null,
     refreshTrigger: Int = 0,
     modifier: Modifier = Modifier
 ) {
@@ -129,7 +132,9 @@ fun MessagesScreen(
                 ) { conversation ->
                     ConversationCard(
                         conversation = conversation,
+                        isPlaying = currentlyPlayingThreadId == conversation.threadId,
                         onPlay = { onPlayMessage(conversation) },
+                        onStop = onStopPlaying,
                         onReply = { onReplyToMessage(conversation) }
                     )
                 }
@@ -141,7 +146,9 @@ fun MessagesScreen(
 @Composable
 fun ConversationCard(
     conversation: Conversation,
+    isPlaying: Boolean = false,
     onPlay: () -> Unit,
+    onStop: () -> Unit,
     onReply: () -> Unit
 ) {
     Card(
@@ -210,17 +217,20 @@ fun ConversationCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Button(
-                    onClick = onPlay,
+                    onClick = if (isPlaying) onStop else onPlay,
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    colors = if (isPlaying) ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ) else ButtonDefaults.buttonColors()
                 ) {
                     Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Play",
+                        imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Stop" else "Play",
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Play")
+                    Text(if (isPlaying) "Stop" else "Play")
                 }
                 
                 Button(

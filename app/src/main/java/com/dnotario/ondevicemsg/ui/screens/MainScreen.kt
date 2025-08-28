@@ -31,7 +31,9 @@ fun MainScreen(
     onOnlineModeChanged: (Boolean) -> Unit,
     onOpenLanguageSettings: () -> Unit,
     onPlayMessage: (Conversation) -> Unit,
+    onStopPlaying: () -> Unit,
     onReplyToMessage: (Conversation) -> Unit,
+    currentlyPlayingThreadId: Long?,
     isRecording: Boolean,
     recognizedText: String,
     ttsEnabled: Boolean,
@@ -85,7 +87,9 @@ fun MainScreen(
                     MessagesScreen(
                         smsRepository = smsRepository,
                         onPlayMessage = onPlayMessage,
+                        onStopPlaying = onStopPlaying,
                         onReplyToMessage = onReplyToMessage,
+                        currentlyPlayingThreadId = currentlyPlayingThreadId,
                         refreshTrigger = refreshTrigger
                     )
                 } else {

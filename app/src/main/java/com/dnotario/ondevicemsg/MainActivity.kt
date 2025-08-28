@@ -33,6 +33,7 @@ import com.dnotario.ondevicemsg.ui.screens.MainScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import java.util.*
 
@@ -53,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private var replyTranscription by mutableStateOf("")
     private var currentReplyConversation by mutableStateOf<Conversation?>(null)
     private var conversationRefreshTrigger by mutableStateOf(0)
+    private var currentlyPlayingThreadId by mutableStateOf<Long?>(null)
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -116,7 +118,9 @@ class MainActivity : ComponentActivity() {
                     onOnlineModeChanged = ::handleOnlineModeChange,
                     onOpenLanguageSettings = ::openLanguageSettings,
                     onPlayMessage = ::playConversation,
+                    onStopPlaying = ::stopPlaying,
                     onReplyToMessage = ::replyToConversation,
+                    currentlyPlayingThreadId = currentlyPlayingThreadId,
                     isRecording = isListening,
                     recognizedText = recognizedText,
                     ttsEnabled = ttsInitialized,
@@ -378,6 +382,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playConversation(conversation: Conversation) {
+        // If already playing this conversation, stop it
+        if (currentlyPlayingThreadId == conversation.threadId) {
+            stopPlaying()
+            return
+        }
+        
+        // Stop any current playback first
+        tts.stop()
+        currentlyPlayingThreadId = conversation.threadId
+        
         val smsRepository = SmsRepository(this)
         
         CoroutineScope(Dispatchers.IO).launch {
@@ -394,14 +408,30 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 val contactName = conversation.contactName ?: conversation.address
-                messagesToPlay.forEach { message ->
+                for (message in messagesToPlay) {
+                    // Check if we should stop
+                    if (currentlyPlayingThreadId != conversation.threadId) {
+                        break
+                    }
+                    
                     val textToSpeak = if (message.isOutgoing) {
                         "You said: ${message.body}" // Sent message
                     } else {
                         "$contactName says: ${message.body}" // Received message
                     }
+                    
+                    // Speak and wait for completion
                     speakText(textToSpeak)
-                    Thread.sleep(100) // Small delay between messages
+                    
+                    // Wait for TTS to finish speaking this message
+                    while (tts.isSpeaking && currentlyPlayingThreadId == conversation.threadId) {
+                        Thread.sleep(100)
+                    }
+                    
+                    // Small delay between messages
+                    if (currentlyPlayingThreadId == conversation.threadId) {
+                        Thread.sleep(200)
+                    }
                 }
                 
                 // Mark messages as read after playing
@@ -410,11 +440,25 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Error playing conversation", e)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    currentlyPlayingThreadId = null
+                }
             }
         }
     }
     
+    private fun stopPlaying() {
+        tts.stop()
+        currentlyPlayingThreadId = null
+    }
+    
     private fun replyToConversation(conversation: Conversation) {
+        // Stop TTS if playing
+        if (currentlyPlayingThreadId != null) {
+            stopPlaying()
+        }
+        
         currentReplyConversation = conversation
         replyTranscription = ""
         recognizerState = "Initializing..."
