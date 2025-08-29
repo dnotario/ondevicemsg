@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.media.AudioManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -22,7 +23,9 @@ import androidx.core.content.ContextCompat
 import com.dnotario.ondevicemsg.ui.theme.OndevicemsgTheme
 import com.dnotario.ondevicemsg.data.repository.SmsRepository
 import com.dnotario.ondevicemsg.data.models.Conversation
+import com.dnotario.ondevicemsg.services.ImageDescriptionService
 import com.dnotario.ondevicemsg.ui.screens.MainScreen
+import com.dnotario.ondevicemsg.utils.TextNormalizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -34,6 +37,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var tts: TextToSpeech
     private var speechRecognizer: SpeechRecognizer? = null
     private var ttsInitialized by mutableStateOf(false)
+    private lateinit var imageDescriptionService: ImageDescriptionService
     private var isListening by mutableStateOf(false)
     private var hasRecordPermission by mutableStateOf(false)
     private var hasSmsPermissions by mutableStateOf(false)
@@ -91,6 +95,12 @@ class MainActivity : ComponentActivity() {
             } else {
                 Log.e("TTS", "TextToSpeech initialization failed")
             }
+        }
+        
+        // Initialize Image Description Service
+        imageDescriptionService = ImageDescriptionService(this)
+        CoroutineScope(Dispatchers.IO).launch {
+            imageDescriptionService.initialize()
         }
 
         // Initialize Speech Recognizer (default to on-device if available)
@@ -283,8 +293,10 @@ class MainActivity : ComponentActivity() {
 
     private fun speakText(text: String) {
         if (ttsInitialized && text.isNotEmpty()) {
-            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "utterance_id")
-            Log.d("TTS", "Speaking: $text")
+            // Apply text normalization for better TTS output
+            val normalizedText = TextNormalizer.normalizeForTTS(text)
+            tts.speak(normalizedText, TextToSpeech.QUEUE_FLUSH, null, "utterance_id")
+            Log.d("TTS", "Speaking: $normalizedText")
         }
     }
 
@@ -390,14 +402,62 @@ class MainActivity : ComponentActivity() {
                         break
                     }
                     
-                    val textToSpeak = if (message.isOutgoing) {
-                        "You said: ${message.body}" // Sent message
+                    // Build the text to speak
+                    var textToSpeak = ""
+                    
+                    // Handle image description if present
+                    if (message.hasImage && message.imageUri != null) {
+                        Log.d("MainActivity", "Message has image: ${message.imageUri}")
+                        
+                        // Announce the image and play processing sounds
+                        val imageAnnouncement = if (message.isOutgoing) {
+                            "You sent an image."
+                        } else {
+                            "$contactName sent an image."
+                        }
+                        speakText(imageAnnouncement)
+                        
+                        // Wait for announcement to finish
+                        while (tts.isSpeaking && currentlyPlayingThreadId == conversation.threadId) {
+                            Thread.sleep(100)
+                        }
+                        
+                        try {
+                            val imageUri = android.net.Uri.parse(message.imageUri)
+                            
+                            // Get the image description (this will wait for completion)
+                            val description = withContext(Dispatchers.IO) {
+                                imageDescriptionService.describeImage(imageUri)
+                            }
+                            
+                            Log.d("MainActivity", "Image description result: $description")
+                            
+                            // Now speak the description
+                            textToSpeak = if (!description.isNullOrEmpty()) {
+                                "The image shows: $description"
+                            } else {
+                                "" // Don't say anything more if no description
+                            }
+                            
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "Error describing image", e)
+                            textToSpeak = "Could not analyze the image."
+                        }
                     } else {
-                        "$contactName says: ${message.body}" // Received message
+                        Log.d("MainActivity", "Message does not have image. hasImage=${message.hasImage}, imageUri=${message.imageUri}")
+                    }
+                    
+                    // Add message text
+                    textToSpeak += if (message.isOutgoing) {
+                        if (message.body.isNotEmpty()) "You said: ${message.body}" else ""
+                    } else {
+                        if (message.body.isNotEmpty()) "$contactName says: ${message.body}" else ""
                     }
                     
                     // Speak and wait for completion
-                    speakText(textToSpeak)
+                    if (textToSpeak.isNotEmpty()) {
+                        speakText(textToSpeak)
+                    }
                     
                     // Wait for TTS to finish speaking this message
                     while (tts.isSpeaking && currentlyPlayingThreadId == conversation.threadId) {
@@ -536,5 +596,8 @@ class MainActivity : ComponentActivity() {
         tts.stop()
         tts.shutdown()
         speechRecognizer?.destroy()
+        if (::imageDescriptionService.isInitialized) {
+            imageDescriptionService.close()
+        }
     }
 }

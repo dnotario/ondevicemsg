@@ -7,7 +7,10 @@ data class Message(
     val body: String,
     val date: Long,
     val isRead: Boolean,
-    val isOutgoing: Boolean
+    val isOutgoing: Boolean,
+    val isMms: Boolean = false,
+    val hasImage: Boolean = false,
+    val imageUri: String? = null
 ) {
     companion object {
         const val TYPE_INBOX = 1

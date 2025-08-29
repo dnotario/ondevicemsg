@@ -154,16 +154,146 @@ class SmsRepository(private val context: Context) {
                             body = body,
                             date = date,
                             isRead = isRead,
-                            isOutgoing = type == Message.TYPE_SENT
+                            isOutgoing = type == Message.TYPE_SENT,
+                            isMms = false,
+                            hasImage = false,
+                            imageUri = null
                         )
                     )
                 }
             }
         } catch (e: Exception) {
-            Log.e("SmsRepository", "Error loading messages for thread $threadId", e)
+            Log.e("SmsRepository", "Error loading SMS messages for thread $threadId", e)
+        }
+        
+        // Also get MMS messages for this thread
+        try {
+            val mmsMessages = getMmsMessagesForThread(threadId)
+            Log.d("SmsRepository", "Found ${mmsMessages.size} MMS messages for thread $threadId")
+            messages.addAll(mmsMessages)
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error loading MMS messages for thread $threadId", e)
+        }
+        
+        // Sort combined messages by date
+        messages.sortByDescending { it.date }
+        messages
+    }
+    
+    private suspend fun getMmsMessagesForThread(threadId: Long): List<Message> = withContext(Dispatchers.IO) {
+        val messages = mutableListOf<Message>()
+        
+        try {
+            val uri = Uri.parse("content://mms")
+            val cursor = contentResolver.query(
+                uri,
+                arrayOf("_id", "thread_id", "date", "read", "msg_box"),
+                "thread_id = ?",
+                arrayOf(threadId.toString()),
+                "date DESC"
+            )
+            
+            cursor?.use {
+                while (it.moveToNext()) {
+                    val id = it.getLong(it.getColumnIndexOrThrow("_id"))
+                    val date = it.getLong(it.getColumnIndexOrThrow("date")) * 1000 // MMS date is in seconds
+                    val isRead = it.getInt(it.getColumnIndexOrThrow("read")) == 1
+                    val msgBox = it.getInt(it.getColumnIndexOrThrow("msg_box"))
+                    val isOutgoing = msgBox == 2 // 2 = sent
+                    
+                    // Get MMS parts (text and images)
+                    val text = getMmsText(id)
+                    val imageUri = getMmsImageUri(id)
+                    
+                    // Get address
+                    val address = getMmsAddress(id, isOutgoing)
+                    
+                    messages.add(
+                        Message(
+                            id = id,
+                            threadId = threadId,
+                            address = address,
+                            body = text ?: "",
+                            date = date,
+                            isRead = isRead,
+                            isOutgoing = isOutgoing,
+                            isMms = true,
+                            hasImage = imageUri != null,
+                            imageUri = imageUri
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error loading MMS messages", e)
         }
         
         messages
+    }
+    
+    private fun getMmsText(mmsId: Long): String? {
+        val uri = Uri.parse("content://mms/part")
+        val cursor = contentResolver.query(
+            uri,
+            arrayOf("_id", "ct", "text"),
+            "mid = ?",
+            arrayOf(mmsId.toString()),
+            null
+        )
+        
+        cursor?.use {
+            while (it.moveToNext()) {
+                val ct = it.getString(it.getColumnIndexOrThrow("ct"))
+                if (ct == "text/plain") {
+                    return it.getString(it.getColumnIndexOrThrow("text"))
+                }
+            }
+        }
+        return null
+    }
+    
+    private fun getMmsImageUri(mmsId: Long): String? {
+        val uri = Uri.parse("content://mms/part")
+        val cursor = contentResolver.query(
+            uri,
+            arrayOf("_id", "ct"),
+            "mid = ?",
+            arrayOf(mmsId.toString()),
+            null
+        )
+        
+        cursor?.use {
+            while (it.moveToNext()) {
+                val ct = it.getString(it.getColumnIndexOrThrow("ct"))
+                if (ct?.startsWith("image/") == true) {
+                    val partId = it.getLong(it.getColumnIndexOrThrow("_id"))
+                    return "content://mms/part/$partId"
+                }
+            }
+        }
+        return null
+    }
+    
+    private fun getMmsAddress(mmsId: Long, isOutgoing: Boolean): String {
+        val uri = Uri.parse("content://mms/$mmsId/addr")
+        val cursor = contentResolver.query(
+            uri,
+            arrayOf("address", "type"),
+            null,
+            null,
+            null
+        )
+        
+        cursor?.use {
+            while (it.moveToNext()) {
+                val type = it.getInt(it.getColumnIndexOrThrow("type"))
+                // type 137 = from, type 151 = to
+                if ((isOutgoing && type == 151) || (!isOutgoing && type == 137)) {
+                    return it.getString(it.getColumnIndexOrThrow("address")) ?: ""
+                }
+            }
+        }
+        return ""
     }
     
     suspend fun markMessagesAsRead(threadId: Long) = withContext(Dispatchers.IO) {
