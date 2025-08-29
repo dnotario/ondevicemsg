@@ -114,6 +114,7 @@ class SmsRepository(private val context: Context) {
     
     suspend fun getUnreadMessagesForConversation(threadId: Long): List<Message> = withContext(Dispatchers.IO) {
         val messages = mutableListOf<Message>()
+        Log.d("SmsRepository", "Getting unread messages for thread $threadId")
         
         // Get unread SMS messages
         try {
@@ -134,6 +135,7 @@ class SmsRepository(private val context: Context) {
                 arrayOf(threadId.toString()),
                 "date DESC"
             )
+            Log.d("SmsRepository", "SMS query returned ${cursor?.count ?: 0} unread messages")
             
             cursor?.use {
                 while (it.moveToNext()) {
@@ -207,6 +209,7 @@ class SmsRepository(private val context: Context) {
         
         // Sort by date
         messages.sortByDescending { it.date }
+        Log.d("SmsRepository", "Returning ${messages.size} total unread messages for thread $threadId")
         messages
     }
     
@@ -490,19 +493,39 @@ class SmsRepository(private val context: Context) {
     
     suspend fun markMessagesAsRead(threadId: Long) = withContext(Dispatchers.IO) {
         try {
+            Log.d("SmsRepository", "Starting to mark messages as read for thread $threadId")
+            
+            // Mark SMS messages as read
             val values = android.content.ContentValues().apply {
                 put("read", 1)
             }
             
-            val uri = Uri.parse("content://sms")
-            contentResolver.update(
-                uri,
+            val smsUri = Uri.parse("content://sms")
+            val smsCount = contentResolver.update(
+                smsUri,
                 values,
                 "thread_id = ? AND read = 0",
                 arrayOf(threadId.toString())
             )
+            Log.d("SmsRepository", "Marked $smsCount SMS messages as read for thread $threadId")
+            
+            // Also mark MMS messages as read
+            val mmsUri = Uri.parse("content://mms")
+            val mmsCount = contentResolver.update(
+                mmsUri,
+                values,
+                "thread_id = ? AND read = 0",
+                arrayOf(threadId.toString())
+            )
+            Log.d("SmsRepository", "Marked $mmsCount MMS messages as read for thread $threadId")
+            
+            if (smsCount == 0 && mmsCount == 0) {
+                Log.w("SmsRepository", "Warning: No messages were marked as read for thread $threadId")
+            }
+        } catch (e: SecurityException) {
+            Log.e("SmsRepository", "Security exception marking messages as read - missing WRITE_SMS permission?", e)
         } catch (e: Exception) {
-            Log.e("SmsRepository", "Error marking messages as read", e)
+            Log.e("SmsRepository", "Error marking messages as read for thread $threadId", e)
         }
     }
     

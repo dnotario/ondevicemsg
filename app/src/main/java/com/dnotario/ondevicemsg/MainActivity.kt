@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Telephony
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -66,6 +67,20 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Check if we're the default SMS app
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            val defaultSmsApp = Telephony.Sms.getDefaultSmsPackage(this)
+            val isDefaultSmsApp = packageName == defaultSmsApp
+            Log.d("MainActivity", "Is default SMS app: $isDefaultSmsApp")
+            
+            if (!isDefaultSmsApp) {
+                // Request to become default SMS app
+                val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
+                intent.putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, packageName)
+                startActivity(intent)
+            }
+        }
 
         // Check for record permission
         viewModel.hasRecordPermission = ContextCompat.checkSelfPermission(
@@ -202,14 +217,23 @@ class MainActivity : ComponentActivity() {
             try {
                 // Get unread messages directly from the repository
                 val unreadMessages = smsRepository.getUnreadMessagesForConversation(conversation.threadId)
+                Log.d("MainActivity", "Found ${unreadMessages.size} unread messages for thread ${conversation.threadId}")
                 
                 val messagesToPlay = if (unreadMessages.isNotEmpty()) {
                     // Play all unread messages (oldest first)
+                    Log.d("MainActivity", "Playing unread messages (oldest first)")
                     unreadMessages.reversed()
                 } else {
                     // Get just the last message
+                    Log.d("MainActivity", "No unread messages, getting last message")
                     val lastMessage = smsRepository.getLastMessageForConversation(conversation.threadId)
-                    if (lastMessage != null) listOf(lastMessage) else emptyList()
+                    if (lastMessage != null) {
+                        Log.d("MainActivity", "Playing last message: isRead=${lastMessage.isRead}")
+                        listOf(lastMessage)
+                    } else {
+                        Log.d("MainActivity", "No messages found for thread")
+                        emptyList()
+                    }
                 }
                 
                 val contactName = conversation.contactName ?: conversation.address
@@ -297,8 +321,14 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 // Mark messages as read after playing
+                Log.d("MainActivity", "Played ${messagesToPlay.size} messages, unread count: ${messagesToPlay.count { !it.isRead }}")
                 if (messagesToPlay.any { !it.isRead }) {
+                    Log.d("MainActivity", "Marking ${messagesToPlay.count { !it.isRead }} messages as read for thread ${conversation.threadId}")
                     smsRepository.markMessagesAsRead(conversation.threadId)
+                    // Small delay to ensure database update completes
+                    delay(100)
+                } else {
+                    Log.d("MainActivity", "All messages were already marked as read")
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Error playing conversation", e)
