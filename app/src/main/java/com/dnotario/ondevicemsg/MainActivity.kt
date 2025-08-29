@@ -30,6 +30,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import java.util.*
 
 class MainActivity : ComponentActivity() {
@@ -189,19 +191,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playConversation(conversation: Conversation) {
-        // If already playing this conversation, stop it
-        if (viewModel.currentlyPlayingThreadId == conversation.threadId) {
-            stopPlaying()
-            return
-        }
-        
         // Stop any current playback first
         stopPlaying()
         viewModel.currentlyPlayingThreadId = conversation.threadId
 
         val smsRepository = SmsRepository(this)
         
-        CoroutineScope(Dispatchers.IO).launch {
+        // Launch and store the job
+        viewModel.currentPlaybackJob = CoroutineScope(Dispatchers.IO).launch {
             try {
                 val messages = smsRepository.getMessagesForConversation(conversation.threadId)
                 val unreadMessages = messages.filter { !it.isRead && !it.isOutgoing }
@@ -216,10 +213,8 @@ class MainActivity : ComponentActivity() {
                 
                 val contactName = conversation.contactName ?: conversation.address
                 for (message in messagesToPlay) {
-                    // Check if we should stop
-                    if (viewModel.currentlyPlayingThreadId != conversation.threadId) {
-                        break
-                    }
+                    // Check if coroutine is still active
+                    ensureActive()
                     
                     // Build the text to speak
                     var textToSpeak = ""
@@ -236,10 +231,8 @@ class MainActivity : ComponentActivity() {
                         }
                         speakText(imageAnnouncement)
                         
-                        // Only process if still playing
-                        if (viewModel.currentlyPlayingThreadId != conversation.threadId) {
-                            continue
-                        }
+                        // Check if coroutine is still active before processing
+                        ensureActive()
                         
                         try {
                             val imageUri = android.net.Uri.parse(message.imageUri)
@@ -279,13 +272,13 @@ class MainActivity : ComponentActivity() {
                     }
                     
                     // Wait for TTS to finish speaking this message
-                    while (tts.isSpeaking.value && viewModel.currentlyPlayingThreadId == conversation.threadId) {
-                        Thread.sleep(100)
+                    while (tts.isSpeaking.value && isActive) {
+                        delay(100) // Use coroutine delay instead of Thread.sleep
                     }
                     
-                    // Small delay between messages
-                    if (viewModel.currentlyPlayingThreadId == conversation.threadId) {
-                        Thread.sleep(200)
+                    // Small delay between messages (only if still active)
+                    if (isActive) {
+                        delay(200)
                     }
                 }
                 
@@ -304,16 +297,10 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun stopPlaying() {
-        tts.stop()
-        viewModel.currentlyPlayingThreadId = null
+        viewModel.stopPlayback()
     }
     
     private fun replyToConversation(conversation: Conversation) {
-        // Stop TTS if playing
-        if (viewModel.currentlyPlayingThreadId != null) {
-            stopPlaying()
-        }
-        
         viewModel.currentReplyConversation = conversation
         viewModel.replyTranscription = ""
         viewModel.recognizerState = "Initializing..."
@@ -321,7 +308,6 @@ class MainActivity : ComponentActivity() {
         
         // Start recording automatically when dialog opens
         CoroutineScope(Dispatchers.Main).launch {
-            kotlinx.coroutines.delay(500) // Small delay for dialog to open
             startReplyRecording()
         }
     }

@@ -11,6 +11,7 @@ import com.dnotario.ondevicemsg.odm.SpeechRecognition
 import com.dnotario.ondevicemsg.odm.ImageAnalysis
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -39,6 +40,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     // Playback state
     var currentlyPlayingThreadId by mutableStateOf<Long?>(null)
+    var currentPlaybackJob: Job? = null
     
     // Reply dialog state
     var showReplyDialog by mutableStateOf(false)
@@ -65,6 +67,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun stopPlayback() {
+        // Cancel the coroutine job first
+        currentPlaybackJob?.cancel()
+        currentPlaybackJob = null
+        // Then stop TTS
         tts.stop()
         currentlyPlayingThreadId = null
     }
