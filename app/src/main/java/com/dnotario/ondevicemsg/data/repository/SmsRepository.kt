@@ -112,6 +112,198 @@ class SmsRepository(private val context: Context) {
         conversations
     }
     
+    suspend fun getUnreadMessagesForConversation(threadId: Long): List<Message> = withContext(Dispatchers.IO) {
+        val messages = mutableListOf<Message>()
+        
+        // Get unread SMS messages
+        try {
+            val uri = Uri.parse("content://sms")
+            val projection = arrayOf(
+                "_id",
+                "address",
+                "body",
+                "date",
+                "read",
+                "type"
+            )
+            
+            val cursor = contentResolver.query(
+                uri,
+                projection,
+                "thread_id = ? AND read = 0 AND type = ${Message.TYPE_INBOX}",
+                arrayOf(threadId.toString()),
+                "date DESC"
+            )
+            
+            cursor?.use {
+                while (it.moveToNext()) {
+                    val id = it.getLong(it.getColumnIndexOrThrow("_id"))
+                    val address = it.getString(it.getColumnIndexOrThrow("address"))
+                    if (address == null) continue
+                    
+                    val body = it.getString(it.getColumnIndexOrThrow("body")) ?: ""
+                    val date = it.getLong(it.getColumnIndexOrThrow("date"))
+                    
+                    messages.add(
+                        Message(
+                            id = id,
+                            threadId = threadId,
+                            address = address,
+                            body = body,
+                            date = date,
+                            isRead = false,
+                            isOutgoing = false,
+                            isMms = false,
+                            hasImage = false,
+                            imageUri = null
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error loading unread SMS messages for thread $threadId", e)
+        }
+        
+        // Also get unread MMS messages
+        try {
+            val mmsUri = Uri.parse("content://mms")
+            val mmsCursor = contentResolver.query(
+                mmsUri,
+                arrayOf("_id", "thread_id", "date", "read", "msg_box"),
+                "thread_id = ? AND read = 0 AND msg_box = 1",  // msg_box = 1 for inbox
+                arrayOf(threadId.toString()),
+                "date DESC"
+            )
+            
+            mmsCursor?.use {
+                while (it.moveToNext()) {
+                    val id = it.getLong(it.getColumnIndexOrThrow("_id"))
+                    val date = it.getLong(it.getColumnIndexOrThrow("date")) * 1000 // MMS date is in seconds
+                    
+                    // Get MMS parts
+                    val text = getMmsText(id)
+                    val imageUri = getMmsImageUri(id)
+                    val address = getMmsAddress(id, false)
+                    
+                    messages.add(
+                        Message(
+                            id = id,
+                            threadId = threadId,
+                            address = address,
+                            body = text ?: "",
+                            date = date,
+                            isRead = false,
+                            isOutgoing = false,
+                            isMms = true,
+                            hasImage = imageUri != null,
+                            imageUri = imageUri
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error loading unread MMS messages for thread $threadId", e)
+        }
+        
+        // Sort by date
+        messages.sortByDescending { it.date }
+        messages
+    }
+    
+    suspend fun getLastMessageForConversation(threadId: Long): Message? = withContext(Dispatchers.IO) {
+        var lastSms: Message? = null
+        var lastMms: Message? = null
+        
+        // Get last SMS
+        try {
+            val uri = Uri.parse("content://sms")
+            val cursor = contentResolver.query(
+                uri,
+                arrayOf("_id", "address", "body", "date", "read", "type"),
+                "thread_id = ?",
+                arrayOf(threadId.toString()),
+                "date DESC LIMIT 1"
+            )
+            
+            cursor?.use {
+                if (it.moveToNext()) {
+                    val id = it.getLong(it.getColumnIndexOrThrow("_id"))
+                    val address = it.getString(it.getColumnIndexOrThrow("address")) ?: ""
+                    val body = it.getString(it.getColumnIndexOrThrow("body")) ?: ""
+                    val date = it.getLong(it.getColumnIndexOrThrow("date"))
+                    val isRead = it.getInt(it.getColumnIndexOrThrow("read")) == 1
+                    val type = it.getInt(it.getColumnIndexOrThrow("type"))
+                    
+                    lastSms = Message(
+                        id = id,
+                        threadId = threadId,
+                        address = address,
+                        body = body,
+                        date = date,
+                        isRead = isRead,
+                        isOutgoing = type == Message.TYPE_SENT,
+                        isMms = false,
+                        hasImage = false,
+                        imageUri = null
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error loading last SMS for thread $threadId", e)
+        }
+        
+        // Get last MMS
+        try {
+            val mmsUri = Uri.parse("content://mms")
+            val mmsCursor = contentResolver.query(
+                mmsUri,
+                arrayOf("_id", "thread_id", "date", "read", "msg_box"),
+                "thread_id = ?",
+                arrayOf(threadId.toString()),
+                "date DESC LIMIT 1"
+            )
+            
+            mmsCursor?.use {
+                if (it.moveToNext()) {
+                    val id = it.getLong(it.getColumnIndexOrThrow("_id"))
+                    val date = it.getLong(it.getColumnIndexOrThrow("date")) * 1000
+                    val isRead = it.getInt(it.getColumnIndexOrThrow("read")) == 1
+                    val msgBox = it.getInt(it.getColumnIndexOrThrow("msg_box"))
+                    val isOutgoing = msgBox == 2
+                    
+                    val text = getMmsText(id)
+                    val imageUri = getMmsImageUri(id)
+                    val address = getMmsAddress(id, isOutgoing)
+                    
+                    lastMms = Message(
+                        id = id,
+                        threadId = threadId,
+                        address = address,
+                        body = text ?: "",
+                        date = date,
+                        isRead = isRead,
+                        isOutgoing = isOutgoing,
+                        isMms = true,
+                        hasImage = imageUri != null,
+                        imageUri = imageUri
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SmsRepository", "Error loading last MMS for thread $threadId", e)
+        }
+        
+        // Return the most recent
+        val sms = lastSms
+        val mms = lastMms
+        when {
+            sms == null -> mms
+            mms == null -> sms
+            sms.date > mms.date -> sms
+            else -> mms
+        }
+    }
+    
     suspend fun getMessagesForConversation(threadId: Long): List<Message> = withContext(Dispatchers.IO) {
         val messages = mutableListOf<Message>()
         

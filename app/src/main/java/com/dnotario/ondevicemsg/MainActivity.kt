@@ -200,15 +200,16 @@ class MainActivity : ComponentActivity() {
         // Launch and store the job
         viewModel.currentPlaybackJob = CoroutineScope(Dispatchers.IO).launch {
             try {
-                val messages = smsRepository.getMessagesForConversation(conversation.threadId)
-                val unreadMessages = messages.filter { !it.isRead && !it.isOutgoing }
+                // Get unread messages directly from the repository
+                val unreadMessages = smsRepository.getUnreadMessagesForConversation(conversation.threadId)
                 
                 val messagesToPlay = if (unreadMessages.isNotEmpty()) {
-                    // Play all unread messages
-                    unreadMessages.reversed() // Oldest first
+                    // Play all unread messages (oldest first)
+                    unreadMessages.reversed()
                 } else {
-                    // Play just the last message
-                    messages.take(1)
+                    // Get just the last message
+                    val lastMessage = smsRepository.getLastMessageForConversation(conversation.threadId)
+                    if (lastMessage != null) listOf(lastMessage) else emptyList()
                 }
                 
                 val contactName = conversation.contactName ?: conversation.address
@@ -231,6 +232,11 @@ class MainActivity : ComponentActivity() {
                         }
                         speakText(imageAnnouncement)
                         
+                        // Wait for announcement to finish
+                        while (tts.isSpeaking.value && isActive) {
+                            delay(100)
+                        }
+                        
                         // Check if coroutine is still active before processing
                         ensureActive()
                         
@@ -244,36 +250,44 @@ class MainActivity : ComponentActivity() {
                             
                             Log.d("MainActivity", "Image description result: $description")
                             
-                            // Now speak the description
-                            textToSpeak = if (!description.isNullOrEmpty()) {
-                                "The image shows: $description"
-                            } else {
-                                "" // Don't say anything more if no description
+                            // Speak the description
+                            if (!description.isNullOrEmpty()) {
+                                speakText("The image shows: $description")
+                                
+                                // Wait for description to finish
+                                while (tts.isSpeaking.value && isActive) {
+                                    delay(100)
+                                }
                             }
                             
                         } catch (e: Exception) {
                             Log.e("MainActivity", "Error describing image", e)
-                            textToSpeak = "Could not analyze the image."
+                            speakText("Could not analyze the image.")
+                            
+                            // Wait for error message to finish
+                            while (tts.isSpeaking.value && isActive) {
+                                delay(100)
+                            }
                         }
                     } else {
                         Log.d("MainActivity", "Message does not have image. hasImage=${message.hasImage}, imageUri=${message.imageUri}")
                     }
                     
-                    // Add message text
-                    textToSpeak += if (message.isOutgoing) {
+                    // Handle message text separately
+                    val messageText = if (message.isOutgoing) {
                         if (message.body.isNotEmpty()) "You said: ${message.body}" else ""
                     } else {
                         if (message.body.isNotEmpty()) "$contactName says: ${message.body}" else ""
                     }
                     
-                    // Speak and wait for completion
-                    if (textToSpeak.isNotEmpty()) {
-                        speakText(textToSpeak)
-                    }
-                    
-                    // Wait for TTS to finish speaking this message
-                    while (tts.isSpeaking.value && isActive) {
-                        delay(100) // Use coroutine delay instead of Thread.sleep
+                    // Speak message text if present
+                    if (messageText.isNotEmpty()) {
+                        speakText(messageText)
+                        
+                        // Wait for TTS to finish speaking this message
+                        while (tts.isSpeaking.value && isActive) {
+                            delay(100)
+                        }
                     }
                     
                     // Small delay between messages (only if still active)
@@ -283,7 +297,7 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 // Mark messages as read after playing
-                if (unreadMessages.isNotEmpty()) {
+                if (messagesToPlay.any { !it.isRead }) {
                     smsRepository.markMessagesAsRead(conversation.threadId)
                 }
             } catch (e: Exception) {
