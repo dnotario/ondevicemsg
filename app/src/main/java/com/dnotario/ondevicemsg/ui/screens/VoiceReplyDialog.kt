@@ -25,7 +25,6 @@ fun VoiceReplyDialog(
     isRecording: Boolean,
     transcribedText: String,
     recognizerState: String,
-    audioLevel: Float = 0f,
     onSend: (String) -> Unit,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,

@@ -1,4 +1,4 @@
-package com.dnotario.ondevicemsg.utils
+package com.dnotario.ondevicemsg.odm
 
 import java.util.regex.Pattern
 
@@ -27,9 +27,9 @@ object TextNormalizer {
     /**
      * Normalizes URLs to be spoken naturally
      * Examples:
-     * - www.google.com -> "google dot com"
-     * - google.com -> "google dot com"
-     * - https://developers.google.com/ml-kit/path -> "google dot com URL"
+     * - www.google.com -> "google.com"
+     * - google.com -> "google.com"
+     * - https://developers.google.com/ml-kit/path -> "google.com URL"
      */
     private fun normalizeUrls(text: String): String {
         val matcher = URL_PATTERN.matcher(text)
@@ -47,8 +47,8 @@ object TextNormalizer {
     
     /**
      * Converts a URL to spoken format
-     * Simple URLs: spoken fully (e.g., "google dot com")
-     * Complex URLs: domain + "URL" (e.g., "google dot com URL")
+     * Simple URLs: returned as-is (e.g., "google.com")
+     * Complex URLs: domain + "URL" (e.g., "google.com URL")
      */
     private fun convertUrlToSpoken(url: String): String {
         val hasProtocol = url.startsWith("http://") || url.startsWith("https://")

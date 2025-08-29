@@ -34,7 +34,6 @@ fun MainScreen(
     showReplyDialog: Boolean,
     replyTranscription: String,
     currentReplyConversation: Conversation?,
-    audioLevel: Float,
     onSendReply: (String) -> Unit,
     onRetryReply: () -> Unit,
     onDismissReply: () -> Unit,
@@ -90,7 +89,6 @@ fun MainScreen(
                 isRecording = isRecording,
                 transcribedText = replyTranscription,
                 recognizerState = recognizerState,
-                audioLevel = audioLevel,
                 onSend = onSendReply,
                 onRetry = onRetryReply,
                 onDismiss = onDismissReply

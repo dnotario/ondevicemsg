@@ -1,4 +1,4 @@
-package com.dnotario.ondevicemsg.services
+package com.dnotario.ondevicemsg.odm
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -6,25 +6,22 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import com.google.mlkit.genai.imagedescription.*
-import com.google.mlkit.genai.common.DownloadCallback
-import com.google.mlkit.genai.common.FeatureStatus
 import com.google.common.util.concurrent.ListenableFuture
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ExecutionException
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
- * Service for generating AI descriptions of images using ML Kit
+ * Image analysis service for generating AI descriptions of images using ML Kit
  */
-class ImageDescriptionService(private val context: Context) {
+class ImageAnalysis(private val context: Context) {
+    
+    companion object {
+        private const val TAG = "ODM_ImageAnalysis"
+    }
     
     private var imageDescriber: ImageDescriber? = null
     private var isInitialized = false
-    
-    companion object {
-        private const val TAG = "ImageDescription"
-    }
     
     /**
      * Initialize the image describer
@@ -36,7 +33,7 @@ class ImageDescriptionService(private val context: Context) {
             val options = ImageDescriberOptions.builder(context).build()
             imageDescriber = ImageDescription.getClient(options)
             isInitialized = true
-            Log.d(TAG, "Image describer client created")
+            Log.d(TAG, "Image describer initialized")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize image describer", e)
         }
@@ -44,6 +41,8 @@ class ImageDescriptionService(private val context: Context) {
     
     /**
      * Generate a description for an image from a URI
+     * @param imageUri The URI of the image to describe
+     * @return The description text, or null if failed
      */
     suspend fun describeImage(imageUri: Uri): String? {
         if (!isInitialized) {
@@ -56,25 +55,29 @@ class ImageDescriptionService(private val context: Context) {
         }
         
         return try {
-            // Load bitmap from URI
             val bitmap = loadBitmapFromUri(imageUri)
             if (bitmap == null) {
                 Log.e(TAG, "Failed to load bitmap from URI: $imageUri")
                 return null
             }
             
-            // Generate description
             describeImage(bitmap)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to describe image", e)
+            Log.e(TAG, "Failed to describe image from URI", e)
             null
         }
     }
     
     /**
      * Generate a description for a bitmap image
+     * @param bitmap The bitmap image to describe
+     * @return The description text, or null if failed
      */
     suspend fun describeImage(bitmap: Bitmap): String? = withContext(Dispatchers.IO) {
+        if (!isInitialized) {
+            initialize()
+        }
+        
         if (!isInitialized || imageDescriber == null) {
             Log.e(TAG, "Image describer not initialized")
             return@withContext null
@@ -84,8 +87,7 @@ class ImageDescriptionService(private val context: Context) {
             // Create the request
             val request = ImageDescriptionRequest.builder(bitmap).build()
             
-            // If we want streaming, we can use the callback version
-            // For simplicity, let's use the non-streaming version that returns a future
+            // Run inference and get the future
             val future: ListenableFuture<ImageDescriptionResult>? = imageDescriber?.runInference(request)
             
             if (future == null) {
@@ -102,13 +104,30 @@ class ImageDescriptionService(private val context: Context) {
             }
             
             val description = result.description
-            Log.d(TAG, "Image description result: $description")
+            Log.d(TAG, "Image description: $description")
             
             description.ifEmpty { null }
         } catch (e: Exception) {
             Log.e(TAG, "Error during image inference", e)
             null
         }
+    }
+    
+    /**
+     * Check if the model is ready
+     */
+    fun isModelReady(): Boolean {
+        return isInitialized && imageDescriber != null
+    }
+    
+    /**
+     * Release resources
+     */
+    fun release() {
+        imageDescriber?.close()
+        imageDescriber = null
+        isInitialized = false
+        Log.d(TAG, "Image describer released")
     }
     
     /**
@@ -123,14 +142,5 @@ class ImageDescriptionService(private val context: Context) {
             Log.e(TAG, "Error loading bitmap from URI: $uri", e)
             null
         }
-    }
-    
-    /**
-     * Clean up resources
-     */
-    fun close() {
-        imageDescriber?.close()
-        imageDescriber = null
-        isInitialized = false
     }
 }
