@@ -3,7 +3,6 @@ package com.dnotario.ondevicemsg.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Message
-import androidx.compose.material.icons.filled.Science
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -19,39 +18,30 @@ import com.dnotario.ondevicemsg.data.repository.SmsRepository
 
 sealed class Screen(val route: String, val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     object Messages : Screen("messages", "Conversations", Icons.Default.Message)
-    object Demo : Screen("demo", "Demo", Icons.Default.Science)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     smsRepository: SmsRepository,
-    onTtsClick: (String) -> Unit,
-    onRecordClick: () -> Unit,
-    onClearClick: () -> Unit,
-    onOnlineModeChanged: (Boolean) -> Unit,
-    onOpenLanguageSettings: () -> Unit,
     onPlayMessage: (Conversation) -> Unit,
     onStopPlaying: () -> Unit,
     onReplyToMessage: (Conversation) -> Unit,
     currentlyPlayingThreadId: Long?,
     isRecording: Boolean,
-    recognizedText: String,
-    ttsEnabled: Boolean,
-    asrEnabled: Boolean,
-    useOnlineRecognition: Boolean,
     recognizerState: String,
     hasSmsPermissions: Boolean,
     showReplyDialog: Boolean,
     replyTranscription: String,
     currentReplyConversation: Conversation?,
+    audioLevel: Float,
     onSendReply: (String) -> Unit,
     onRetryReply: () -> Unit,
     onDismissReply: () -> Unit,
     refreshTrigger: Int = 0
 ) {
     val navController = rememberNavController()
-    val items = listOf(Screen.Messages, Screen.Demo)
+    val items = listOf(Screen.Messages)
     
     Box(modifier = Modifier.fillMaxSize()) {
         // Main content with potential blur
@@ -60,36 +50,14 @@ fun MainScreen(
                 .fillMaxSize()
                 .then(
                     if (showReplyDialog) {
-                        Modifier.blur(radius = 5.dp) // Apply subtle blur when dialog is shown
+                        Modifier.blur(radius = 5.dp) // Apply static blur when dialog is shown
                     } else {
                         Modifier
                     }
                 )
         ) {
             Scaffold(
-        bottomBar = {
-            NavigationBar {
-                val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentRoute = navBackStackEntry?.destination?.route
-                
-                items.forEach { screen ->
-                    NavigationBarItem(
-                        icon = { Icon(screen.icon, contentDescription = screen.title) },
-                        label = { Text(screen.title) },
-                        selected = currentRoute == screen.route,
-                        onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }
-                    )
-                }
-            }
-        }
+        // No bottom bar needed with single screen
     ) { innerPadding ->
         NavHost(
             navController = navController,
@@ -110,22 +78,6 @@ fun MainScreen(
                     PermissionRequestScreen()
                 }
             }
-            
-            composable(Screen.Demo.route) {
-                DemoScreen(
-                    onTtsClick = onTtsClick,
-                    onRecordClick = onRecordClick,
-                    onClearClick = onClearClick,
-                    onOnlineModeChanged = onOnlineModeChanged,
-                    onOpenLanguageSettings = onOpenLanguageSettings,
-                    isRecording = isRecording,
-                    recognizedText = recognizedText,
-                    ttsEnabled = ttsEnabled,
-                    asrEnabled = asrEnabled,
-                    useOnlineRecognition = useOnlineRecognition,
-                    recognizerState = recognizerState
-                )
-            }
         }
     }
         } // Close Box with blur
@@ -138,6 +90,7 @@ fun MainScreen(
                 isRecording = isRecording,
                 transcribedText = replyTranscription,
                 recognizerState = recognizerState,
+                audioLevel = audioLevel,
                 onSend = onSendReply,
                 onRetry = onRetryReply,
                 onDismiss = onDismissReply

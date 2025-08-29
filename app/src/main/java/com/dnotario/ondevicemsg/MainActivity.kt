@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -15,14 +14,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import kotlin.math.abs
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -42,11 +35,9 @@ class MainActivity : ComponentActivity() {
     private var speechRecognizer: SpeechRecognizer? = null
     private var ttsInitialized by mutableStateOf(false)
     private var isListening by mutableStateOf(false)
-    private var recognizedText by mutableStateOf("")
     private var hasRecordPermission by mutableStateOf(false)
     private var hasSmsPermissions by mutableStateOf(false)
     private var hasContactsPermission by mutableStateOf(false)
-    private var useOnlineRecognition by mutableStateOf(false) // Default to offline
     private var recognizerState by mutableStateOf("Idle")
     
     // Reply dialog state
@@ -55,6 +46,8 @@ class MainActivity : ComponentActivity() {
     private var currentReplyConversation by mutableStateOf<Conversation?>(null)
     private var conversationRefreshTrigger by mutableStateOf(0)
     private var currentlyPlayingThreadId by mutableStateOf<Long?>(null)
+    private var audioLevel by mutableStateOf(0f) // For sound visualization
+    
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -109,28 +102,17 @@ class MainActivity : ComponentActivity() {
             OndevicemsgTheme {
                 MainScreen(
                     smsRepository = smsRepository,
-                    onTtsClick = ::speakText,
-                    onRecordClick = ::toggleRecording,
-                    onClearClick = { 
-                        recognizedText = ""
-                        recognizerState = "Cleared"
-                    },
-                    onOnlineModeChanged = ::handleOnlineModeChange,
-                    onOpenLanguageSettings = ::openLanguageSettings,
                     onPlayMessage = ::playConversation,
                     onStopPlaying = ::stopPlaying,
                     onReplyToMessage = ::replyToConversation,
                     currentlyPlayingThreadId = currentlyPlayingThreadId,
                     isRecording = isListening,
-                    recognizedText = recognizedText,
-                    ttsEnabled = ttsInitialized,
-                    asrEnabled = hasRecordPermission && speechRecognizer != null,
-                    useOnlineRecognition = useOnlineRecognition,
                     recognizerState = recognizerState,
                     hasSmsPermissions = hasSmsPermissions,
                     showReplyDialog = showReplyDialog,
                     replyTranscription = replyTranscription,
                     currentReplyConversation = currentReplyConversation,
+                    audioLevel = audioLevel,
                     onSendReply = ::sendReply,
                     onRetryReply = ::retryReply,
                     onDismissReply = ::dismissReplyDialog,
@@ -152,43 +134,27 @@ class MainActivity : ComponentActivity() {
             return
         }
         
-        if (useOnlineRecognition) {
-            // Create standard recognizer (can go online)
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-            Log.d("ASR", "Using online/offline speech recognition")
-            recognizerState = "Online mode ready"
+        // Try to use on-device recognizer for privacy and speed (API 31+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && 
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+            speechRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+            Log.d("ASR", "Using on-device only speech recognition")
+            recognizerState = "On-device mode ready"
         } else {
-            // Create on-device only recognizer (API 31+)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && 
-                SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
-                speechRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-                Log.d("ASR", "Using on-device only speech recognition")
-                recognizerState = "On-device mode ready"
+            // Fallback to standard recognizer if on-device not available
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                Log.w("ASR", "On-device requires API 31+, using standard recognition")
+                recognizerState = "Standard mode (API<31)"
             } else {
-                // Fallback to standard recognizer if on-device not available
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                    Log.w("ASR", "On-device requires API 31+, using standard recognition")
-                    recognizerState = "Standard mode (API<31)"
-                } else {
-                    Log.w("ASR", "On-device not available, using standard recognition")
-                    recognizerState = "Standard mode"
-                }
+                Log.w("ASR", "On-device not available, using standard recognition")
+                recognizerState = "Standard mode"
             }
         }
         
         setupRecognitionListener()
     }
     
-    private fun handleOnlineModeChange(enabled: Boolean) {
-        // Stop any ongoing recognition
-        if (isListening) {
-            stopListening()
-        }
-        
-        useOnlineRecognition = enabled
-        initializeSpeechRecognizer()
-    }
 
     private fun setupRecognitionListener() {
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
@@ -202,9 +168,52 @@ class MainActivity : ComponentActivity() {
                 recognizerState = "Listening..."
             }
 
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                // Convert RMS to a normalized value (0 to 1)
+                // RMS typically ranges from -2 to 10 for speech
+                val normalized = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+                // Amplify for better visualization
+                audioLevel = (normalized * 2f).coerceIn(0f, 1f)
+                
+                // Log RMS updates with timestamp
+                val currentTime = System.currentTimeMillis()
+                Log.d("ASR", "RMS update: rmsdB=$rmsdB, normalized=$normalized, audioLevel=$audioLevel, time=$currentTime")
+            }
 
-            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onBufferReceived(buffer: ByteArray?) {
+                // Try to get real waveform data from the buffer
+                if (buffer != null && buffer.isNotEmpty()) {
+                    try {
+                        // Convert byte array to 16-bit PCM samples
+                        val samples = ShortArray(buffer.size / 2)
+                        for (i in samples.indices) {
+                            // Combine two bytes into one 16-bit sample (little-endian)
+                            val low = buffer[i * 2].toInt() and 0xFF
+                            val high = buffer[i * 2 + 1].toInt() shl 8
+                            samples[i] = (high or low).toShort()
+                        }
+                        
+                        // Calculate peak amplitude for responsive visualization
+                        var maxAmplitude = 0
+                        for (sample in samples) {
+                            val amplitude = kotlin.math.abs(sample.toInt())
+                            if (amplitude > maxAmplitude) {
+                                maxAmplitude = amplitude
+                            }
+                        }
+                        
+                        // Normalize to 0-1 range (16-bit audio max is 32768)
+                        val normalized = (maxAmplitude / 32768f)
+                        
+                        // Amplify for better visualization
+                        audioLevel = (normalized * 3f).coerceIn(0f, 1f)
+                        
+                        Log.d("ASR", "Buffer received: ${buffer.size} bytes, peak: $maxAmplitude, level: $audioLevel")
+                    } catch (e: Exception) {
+                        Log.e("ASR", "Error processing audio buffer", e)
+                    }
+                }
+            }
 
             override fun onEndOfSpeech() {
                 Log.d("ASR", "Speech ended")
@@ -232,8 +241,8 @@ class MainActivity : ComponentActivity() {
                 Log.e("ASR", "Recognition error code $error: $errorMessage")
                 recognizerState = errorMessage
                 
-                // For language unavailable error with on-device mode, provide guidance
-                if (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE && !useOnlineRecognition) {
+                // For language unavailable error, provide guidance
+                if (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) {
                     Log.e("ASR", "Language unavailable for on-device recognition. " +
                             "User needs to download offline speech recognition data. " +
                             "Go to Settings > System > Languages & input > On-device speech recognition")
@@ -246,18 +255,9 @@ class MainActivity : ComponentActivity() {
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (!matches.isNullOrEmpty()) {
-                    if (showReplyDialog) {
-                        // Update reply transcription with final results
-                        replyTranscription = matches[0]
-                        recognizerState = "Ready to send"
-                    } else {
-                        recognizedText = if (recognizedText.isEmpty()) {
-                            matches[0]
-                        } else {
-                            "$recognizedText ${matches[0]}"
-                        }
-                        recognizerState = "Recognized: \"${matches[0]}\""
-                    }
+                    // Update reply transcription with final results
+                    replyTranscription = matches[0]
+                    recognizerState = "Ready to send"
                     Log.d("ASR", "Final results: ${matches[0]}")
                 } else {
                     recognizerState = "No results"
@@ -271,13 +271,9 @@ class MainActivity : ComponentActivity() {
                 val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (!matches.isNullOrEmpty()) {
                     Log.d("ASR", "Partial results: ${matches[0]}")
-                    if (showReplyDialog) {
-                        // Update reply transcription with partial results
-                        replyTranscription = matches[0]
-                        recognizerState = "Hearing..."
-                    } else {
-                        recognizerState = "Hearing: \"${matches[0]}\""
-                    }
+                    // Update reply transcription with partial results
+                    replyTranscription = matches[0]
+                    recognizerState = "Hearing..."
                 }
             }
 
@@ -292,13 +288,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun toggleRecording() {
-        if (isListening) {
-            stopListening()
-        } else {
-            startListening()
-        }
-    }
 
     private fun startListening() {
         if (!hasRecordPermission) {
@@ -318,10 +307,8 @@ class MainActivity : ComponentActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            // Only use offline if explicitly set
-            if (!useOnlineRecognition) {
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            }
+            // Always use offline for privacy and speed
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         }
 
         speechRecognizer?.startListening(intent)
@@ -335,21 +322,10 @@ class MainActivity : ComponentActivity() {
         isListening = false
         recognizerState = "Stopped"
         Log.d("ASR", "Stopped listening")
+        // Note: We don't stop audio capture here because we want 
+        // the visualization to continue while the dialog is open
     }
     
-    private fun openLanguageSettings() {
-        try {
-            // Try to open speech recognition settings directly
-            val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
-            startActivity(intent)
-            Log.d("Settings", "Opening language settings")
-        } catch (e: Exception) {
-            // Fallback to general settings
-            val intent = Intent(Settings.ACTION_SETTINGS)
-            startActivity(intent)
-            Log.e("Settings", "Could not open language settings directly", e)
-        }
-    }
     
     private fun checkAndRequestSmsPermissions() {
         val smsPermissionsGranted = ContextCompat.checkSelfPermission(
@@ -464,6 +440,9 @@ class MainActivity : ComponentActivity() {
         recognizerState = "Initializing..."
         showReplyDialog = true
         
+        // Don't use AudioRecord as it conflicts with SpeechRecognizer
+        // We'll use RMS from speech recognizer instead
+        
         // Start recording automatically when dialog opens
         CoroutineScope(Dispatchers.Main).launch {
             kotlinx.coroutines.delay(500) // Small delay for dialog to open
@@ -548,7 +527,9 @@ class MainActivity : ComponentActivity() {
         replyTranscription = ""
         currentReplyConversation = null
         recognizerState = "Idle"
+        audioLevel = 0f
     }
+    
 
     override fun onDestroy() {
         super.onDestroy()

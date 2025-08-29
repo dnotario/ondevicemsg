@@ -1,8 +1,10 @@
 package com.dnotario.ondevicemsg.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
@@ -91,13 +93,11 @@ fun MessagesScreen(
     }
     
     Column(
-        modifier = modifier.fillMaxSize()
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        Text(
-            text = "Conversations",
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.padding(16.dp)
-        )
+        // Removed title for cleaner Android Auto style
         
         if (isLoading) {
             Box(
@@ -123,8 +123,8 @@ fun MessagesScreen(
             
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(16.dp)
             ) {
                 items(
                     items = sortedConversations,
@@ -154,13 +154,17 @@ fun ConversationCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 100.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .heightIn(min = 120.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(20.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -176,12 +180,18 @@ fun ConversationCard(
                     ) {
                         Text(
                             text = conversation.getDisplayName(),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         if (conversation.unreadCount > 0) {
-                            Badge {
-                                Text(conversation.unreadCount.toString())
+                            Badge(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            ) {
+                                Text(
+                                    text = conversation.unreadCount.toString(),
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
                             }
                         }
                     }
@@ -194,7 +204,8 @@ fun ConversationCard(
                         } else {
                             conversation.lastMessageText ?: "No messages"
                         },
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(end = 8.dp)
@@ -204,13 +215,13 @@ fun ConversationCard(
                     
                     Text(
                         text = formatTime(conversation.lastMessageTime),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
                 }
             }
             
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -219,10 +230,13 @@ fun ConversationCard(
                 Button(
                     onClick = if (isPlaying) onStop else onPlay,
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                     colors = if (isPlaying) ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
-                    ) else ButtonDefaults.buttonColors()
+                    ) else ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
@@ -236,7 +250,11 @@ fun ConversationCard(
                 Button(
                     onClick = onReply,
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary
+                    )
                 ) {
                     Icon(
                         imageVector = Icons.Default.Mic,
