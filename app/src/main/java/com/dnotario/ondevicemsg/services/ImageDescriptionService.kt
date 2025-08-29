@@ -8,9 +8,9 @@ import android.util.Log
 import com.google.mlkit.genai.imagedescription.*
 import com.google.mlkit.genai.common.DownloadCallback
 import com.google.mlkit.genai.common.FeatureStatus
-import com.google.android.gms.tasks.Task
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.*
-import kotlinx.coroutines.tasks.await
+import java.util.concurrent.ExecutionException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -74,32 +74,37 @@ class ImageDescriptionService(private val context: Context) {
     /**
      * Generate a description for a bitmap image
      */
-    suspend fun describeImage(bitmap: Bitmap): String? {
+    suspend fun describeImage(bitmap: Bitmap): String? = withContext(Dispatchers.IO) {
         if (!isInitialized || imageDescriber == null) {
             Log.e(TAG, "Image describer not initialized")
-            return null
+            return@withContext null
         }
         
-        return try {
+        try {
             // Create the request
             val request = ImageDescriptionRequest.builder(bitmap).build()
             
-            // Collect the streaming response
-            val descriptionBuilder = StringBuilder()
+            // If we want streaming, we can use the callback version
+            // For simplicity, let's use the non-streaming version that returns a future
+            val future: ListenableFuture<ImageDescriptionResult>? = imageDescriber?.runInference(request)
             
-            // Run inference with streaming callback
-            val inferenceResult = imageDescriber?.runInference(request) { outputText ->
-                Log.d(TAG, "Received description chunk: $outputText")
-                descriptionBuilder.append(outputText)
+            if (future == null) {
+                Log.e(TAG, "Failed to start inference")
+                return@withContext null
             }
             
-            // Wait for the inference to complete
-            inferenceResult?.await()
+            // Wait for the future to complete and get the result
+            val result = try {
+                future.get() // This blocks until the result is ready
+            } catch (e: ExecutionException) {
+                Log.e(TAG, "Inference execution failed", e)
+                return@withContext null
+            }
             
-            val finalDescription = descriptionBuilder.toString().trim()
-            Log.d(TAG, "Final image description: $finalDescription")
+            val description = result.description
+            Log.d(TAG, "Image description result: $description")
             
-            finalDescription.ifEmpty { null }
+            description.ifEmpty { null }
         } catch (e: Exception) {
             Log.e(TAG, "Error during image inference", e)
             null

@@ -88,31 +88,12 @@ object TextNormalizer {
             domain
         }
         
-        // Convert to spoken format
-        val spokenDomain = convertDomainToSpoken(mainDomain)
-        
+        // Convert to spoken format - just return the domain as is
+        // TTS will handle pronunciation
         return if (isComplex) {
-            "$spokenDomain URL"
+            "$mainDomain URL"
         } else {
-            spokenDomain
+            mainDomain
         }
-    }
-    
-    /**
-     * Converts a domain to spoken format
-     * Example: google.com -> "google dot com"
-     */
-    private fun convertDomainToSpoken(domain: String): String {
-        // Handle special cases for common domains
-        val specialCases = mapOf(
-            "gmail.com" to "gmail",
-            "yahoo.com" to "yahoo",
-            "outlook.com" to "outlook"
-        )
-        
-        specialCases[domain]?.let { return it }
-        
-        // Replace dots with " dot "
-        return domain.replace(".", " dot ")
     }
 }
