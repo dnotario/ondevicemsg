@@ -1,11 +1,8 @@
 package com.dnotario.ondevicemsg
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
-import android.provider.Telephony
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -67,20 +64,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        // Check if we're the default SMS app
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            val defaultSmsApp = Telephony.Sms.getDefaultSmsPackage(this)
-            val isDefaultSmsApp = packageName == defaultSmsApp
-            Log.d("MainActivity", "Is default SMS app: $isDefaultSmsApp")
-            
-            if (!isDefaultSmsApp) {
-                // Request to become default SMS app
-                val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
-                intent.putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, packageName)
-                startActivity(intent)
-            }
-        }
 
         // Check for record permission
         viewModel.hasRecordPermission = ContextCompat.checkSelfPermission(
