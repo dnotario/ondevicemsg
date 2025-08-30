@@ -220,48 +220,76 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 val contactName = conversation.contactName ?: conversation.address
-                for (message in messagesToPlay) {
+                for ((index, message) in messagesToPlay.withIndex()) {
+                    Log.d("MainActivity", "Playing message ${index + 1}/${messagesToPlay.size}: hasImage=${message.hasImage}, hasText=${message.body.isNotEmpty()}")
+                    
                     // Check if coroutine is still active
                     ensureActive()
                     
                     // Build the text to speak
                     var textToSpeak = ""
                     
-                    // Handle image description if present
+                    // Handle image and text together for proper sequencing
                     if (message.hasImage && message.imageUri != null) {
-                        Log.d("MainActivity", "Message has image: ${message.imageUri}")
+                        Log.d("MainActivity", "Processing image message: ${message.imageUri}")
                         
                         // Announce the image is being processed
                         val imageAnnouncement = if (message.isOutgoing) {
                             "You sent an image. Analyzing..."
                         } else {
-                            "$contactName sent an image. Analyzing..."
+                            "Image. Analyzing..."
                         }
                         speakText(imageAnnouncement)
                         
                         // Wait for announcement to finish
+                        Log.d("MainActivity", "Waiting for 'Analyzing...' to finish speaking")
                         while (tts.isSpeaking.value && isActive) {
                             delay(100)
                         }
+                        Log.d("MainActivity", "'Analyzing...' finished, proceeding with image analysis")
                         
                         // Check if coroutine is still active before processing
                         ensureActive()
                         
                         try {
                             val imageUri = android.net.Uri.parse(message.imageUri)
+                            Log.d("MainActivity", "Starting image analysis for URI: $imageUri")
                             
                             // Get the image description (this will wait for completion)
                             val description = withContext(Dispatchers.IO) {
                                 imageAnalysis.describeImage(imageUri)
                             }
                             
-                            Log.d("MainActivity", "Image description result: $description")
+                            Log.d("MainActivity", "Image analysis completed. Description: '$description' (null=${description == null}, empty=${description?.isEmpty()})")
                             
-                            // Speak the description
+                            // Speak the image description first
                             if (!description.isNullOrEmpty()) {
                                 speakText("The image shows: $description")
                                 
-                                // Wait for description to finish
+                                // Wait for image description to finish
+                                while (tts.isSpeaking.value && isActive) {
+                                    delay(100)
+                                }
+                            } else {
+                                // If no description available, still announce there was an image
+                                speakText("Image received but could not be described")
+                                
+                                // Wait for announcement to finish
+                                while (tts.isSpeaking.value && isActive) {
+                                    delay(100)
+                                }
+                            }
+                            
+                            // Then speak the message text if present
+                            if (message.body.isNotEmpty()) {
+                                val messageText = if (message.isOutgoing) {
+                                    "You said: ${message.body}"
+                                } else {
+                                    message.body
+                                }
+                                speakText(messageText)
+                                
+                                // Wait for message text to finish
                                 while (tts.isSpeaking.value && isActive) {
                                     delay(100)
                                 }
@@ -275,33 +303,50 @@ class MainActivity : ComponentActivity() {
                             while (tts.isSpeaking.value && isActive) {
                                 delay(100)
                             }
+                            
+                            // Still speak the text message if image analysis failed
+                            if (message.body.isNotEmpty()) {
+                                val messageText = if (message.isOutgoing) {
+                                    "You said: ${message.body}"
+                                } else {
+                                    message.body
+                                }
+                                speakText(messageText)
+                                
+                                // Wait for text to finish
+                                while (tts.isSpeaking.value && isActive) {
+                                    delay(100)
+                                }
+                            }
                         }
                     } else {
                         Log.d("MainActivity", "Message does not have image. hasImage=${message.hasImage}, imageUri=${message.imageUri}")
-                    }
-                    
-                    // Handle message text separately
-                    val messageText = if (message.isOutgoing) {
-                        if (message.body.isNotEmpty()) "You said: ${message.body}" else ""
-                    } else {
-                        if (message.body.isNotEmpty()) "$contactName says: ${message.body}" else ""
-                    }
-                    
-                    // Speak message text if present
-                    if (messageText.isNotEmpty()) {
-                        speakText(messageText)
                         
-                        // Wait for TTS to finish speaking this message
-                        while (tts.isSpeaking.value && isActive) {
-                            delay(100)
+                        // Handle text-only message
+                        val messageText = if (message.isOutgoing) {
+                            if (message.body.isNotEmpty()) "You said: ${message.body}" else ""
+                        } else {
+                            message.body
+                        }
+                        
+                        // Speak message text if present
+                        if (messageText.isNotEmpty()) {
+                            speakText(messageText)
+                            
+                            // Wait for TTS to finish speaking this message
+                            while (tts.isSpeaking.value && isActive) {
+                                delay(100)
+                            }
                         }
                     }
                     
                     // Small delay between messages (only if still active)
-                    if (isActive) {
+                    if (isActive && index < messagesToPlay.size - 1) {
+                        Log.d("MainActivity", "Finished message ${index + 1}, pausing 200ms before next message")
                         delay(200)
                     }
                 }
+                Log.d("MainActivity", "Finished playing all ${messagesToPlay.size} messages")
                 
                 // Mark messages as read after playing
                 Log.d("MainActivity", "Played ${messagesToPlay.size} messages, unread count: ${messagesToPlay.count { !it.isRead }}")
@@ -313,11 +358,24 @@ class MainActivity : ComponentActivity() {
                 } else {
                     Log.d("MainActivity", "All messages were already marked as read")
                 }
+                
+                // Wait for TTS to actually finish before clearing the playing state
+                while (tts.isSpeaking.value) {
+                    delay(100)
+                }
+                
+                // Clear the playing state after TTS completes
+                withContext(Dispatchers.Main) {
+                    viewModel.currentlyPlayingThreadId = null
+                }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Error playing conversation", e)
             } finally {
+                // Ensure we clear the playing state even if there's an error
                 withContext(Dispatchers.Main) {
-                    viewModel.currentlyPlayingThreadId = null
+                    if (viewModel.currentlyPlayingThreadId == conversation.threadId) {
+                        viewModel.currentlyPlayingThreadId = null
+                    }
                 }
             }
         }

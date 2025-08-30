@@ -49,10 +49,10 @@ fun MessagesScreen(
         }
     }
     
-    // Update only changed conversations
+    // Observe content changes for real-time updates
     LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(10000) // Check every 10 seconds
+        // Use content observer for immediate updates
+        smsRepository.observeContentChanges().collect {
             try {
                 val newConversations = smsRepository.getConversations()
                 

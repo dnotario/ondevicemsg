@@ -35,6 +35,7 @@ class TextToSpeech(private val context: Context) {
                 // Set up utterance progress listener once
                 tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
+                        // Already set to true in speak(), but ensure it's still true
                         _isSpeaking.value = true
                         Log.d(TAG, "TTS started: $utteranceId")
                     }
@@ -77,9 +78,19 @@ class TextToSpeech(private val context: Context) {
             text
         }
         
+        // Set isSpeaking immediately to avoid race condition
+        _isSpeaking.value = true
+        
         val utteranceId = "utterance_${System.currentTimeMillis()}"
-        tts?.speak(processedText, AndroidTTS.QUEUE_FLUSH, null, utteranceId)
-        Log.d(TAG, "Speaking: $processedText (id: $utteranceId)")
+        val result = tts?.speak(processedText, AndroidTTS.QUEUE_FLUSH, null, utteranceId)
+        
+        // If speak failed, reset the flag
+        if (result != AndroidTTS.SUCCESS) {
+            _isSpeaking.value = false
+            Log.e(TAG, "Failed to speak text")
+        } else {
+            Log.d(TAG, "Speaking: $processedText (id: $utteranceId)")
+        }
     }
     
     /**

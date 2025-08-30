@@ -10,8 +10,10 @@ import android.telephony.SmsManager
 import android.util.Log
 import com.dnotario.ondevicemsg.data.models.Conversation
 import com.dnotario.ondevicemsg.data.models.Message
+import com.dnotario.ondevicemsg.data.SmsContentObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.Flow
 
 // Helper data class for intermediate storage
 private data class ConversationData(
@@ -28,11 +30,18 @@ class SmsRepository(private val context: Context) {
     
     private val contentResolver: ContentResolver = context.contentResolver
     private val contactCache = mutableMapOf<String, String>()
+    private val contentObserver = SmsContentObserver(contentResolver)
+    
+    // Flow that emits when SMS/MMS content changes
+    fun observeContentChanges(): Flow<Unit> = contentObserver.observeChanges()
     
     suspend fun getConversations(): List<Conversation> = withContext(Dispatchers.IO) {
         val conversations = mutableListOf<Conversation>()
         
         try {
+            val threadDataMap = mutableMapOf<Long, ConversationData>()
+            val phoneNumbers = mutableSetOf<String>()
+            
             // Get all SMS messages, we'll group them ourselves
             val uri = Uri.parse("content://sms")
             val projection = arrayOf(
@@ -53,8 +62,6 @@ class SmsRepository(private val context: Context) {
             )
             
             cursor?.use { 
-                val phoneNumbers = mutableSetOf<String>()
-                val threadDataMap = mutableMapOf<Long, ConversationData>()
                 val threadIds = mutableSetOf<Long>()
                 
                 while (it.moveToNext()) {
@@ -85,25 +92,83 @@ class SmsRepository(private val context: Context) {
                     // Only load first 15 conversations for speed
                     if (threadDataMap.size >= 15) break
                 }
+            }
+            
+            // Also check MMS for more recent messages
+            val mmsUri = Uri.parse("content://mms")
+            val mmsCursor = contentResolver.query(
+                mmsUri,
+                arrayOf("_id", "thread_id", "date", "read", "msg_box"),
+                null,
+                null,
+                "date DESC"
+            )
+            
+            mmsCursor?.use {
+                val processedThreads = mutableSetOf<Long>()
                 
-                // Batch load contact names (this is fast)
-                val contactNames = batchLoadContactNames(phoneNumbers)
-                
-                // Build conversation list
-                threadDataMap.values.sortedByDescending { it.date }.forEach { data ->
-                    conversations.add(
-                        Conversation(
-                            threadId = data.threadId,
-                            address = data.address,
-                            contactName = contactNames[data.address],
-                            messageCount = data.messageCount,
-                            unreadCount = data.unreadCount,
-                            lastMessageTime = data.date,
-                            lastMessageText = data.snippet,
-                            lastMessageIsOutgoing = data.lastMessageIsOutgoing
+                while (it.moveToNext()) {
+                    val threadId = it.getLong(it.getColumnIndexOrThrow("thread_id"))
+                    
+                    // Skip if we already processed this thread for MMS
+                    if (threadId in processedThreads) continue
+                    processedThreads.add(threadId)
+                    
+                    val mmsId = it.getLong(it.getColumnIndexOrThrow("_id"))
+                    val date = it.getLong(it.getColumnIndexOrThrow("date")) * 1000 // MMS date is in seconds
+                    val isRead = it.getInt(it.getColumnIndexOrThrow("read")) == 1
+                    val msgBox = it.getInt(it.getColumnIndexOrThrow("msg_box"))
+                    val isOutgoing = msgBox == 2
+                    
+                    // Check if this MMS is more recent than the SMS for this thread
+                    val existingData = threadDataMap[threadId]
+                    if (existingData == null || date > existingData.date) {
+                        // Get MMS details
+                        val address = getMmsAddress(mmsId, isOutgoing)
+                        val text = getMmsText(mmsId)
+                        val hasImage = getMmsImageUri(mmsId) != null
+                        
+                        val snippet = when {
+                            !text.isNullOrEmpty() -> text
+                            hasImage -> "📷 Photo"
+                            else -> "MMS message"
+                        }
+                        
+                        phoneNumbers.add(address)
+                        
+                        threadDataMap[threadId] = ConversationData(
+                            threadId = threadId,
+                            address = address,
+                            date = date,
+                            snippet = snippet,
+                            messageCount = 0,
+                            unreadCount = if (!isRead && msgBox == 1) 1 else 0,
+                            lastMessageIsOutgoing = isOutgoing
                         )
-                    )
+                    }
+                    
+                    // Stop if we've checked enough threads
+                    if (processedThreads.size >= 15) break
                 }
+            }
+            
+            // Batch load contact names (this is fast)
+            val contactNames = batchLoadContactNames(phoneNumbers)
+            
+            // Build conversation list
+            threadDataMap.values.sortedByDescending { it.date }.take(15).forEach { data ->
+                conversations.add(
+                    Conversation(
+                        threadId = data.threadId,
+                        address = data.address,
+                        contactName = contactNames[data.address],
+                        messageCount = data.messageCount,
+                        unreadCount = data.unreadCount,
+                        lastMessageTime = data.date,
+                        lastMessageText = data.snippet,
+                        lastMessageIsOutgoing = data.lastMessageIsOutgoing
+                    )
+                )
             }
         } catch (e: Exception) {
             Log.e("SmsRepository", "Error loading conversations", e)
