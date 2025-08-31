@@ -17,8 +17,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.dnotario.ondevicemsg.ui.theme.OndevicemsgTheme
 import com.dnotario.ondevicemsg.data.repository.SmsRepository
+import com.dnotario.ondevicemsg.data.repository.ContactsRepository
 import com.dnotario.ondevicemsg.data.models.Conversation
 import com.dnotario.ondevicemsg.ui.screens.MainScreen
+import com.dnotario.ondevicemsg.ui.components.ComposeDialog
+import com.dnotario.ondevicemsg.utils.FuzzyMatcher
 import com.dnotario.ondevicemsg.odm.TextToSpeech
 import com.dnotario.ondevicemsg.odm.SpeechRecognition
 import com.dnotario.ondevicemsg.odm.ImageAnalysis
@@ -99,9 +102,33 @@ class MainActivity : ComponentActivity() {
         }
 
         val smsRepository = SmsRepository(this)
+        val contactsRepository = ContactsRepository(this)
         
         setContent {
             OndevicemsgTheme {
+                // Show compose dialog if needed
+                if (viewModel.showComposeDialog) {
+                    ComposeDialog(
+                        isListening = viewModel.composeIsListening,
+                        recognizerState = viewModel.composeRecognizerState,
+                        transcription = viewModel.composeTranscription,
+                        matchedContacts = viewModel.composeMatchedContacts,
+                        onDismiss = { dismissComposeDialog() },
+                        onTextChange = { text ->
+                            onComposeTextChange(text, contactsRepository)
+                        },
+                        onContactSelect = { contact ->
+                            onComposeContactSelect(contact)
+                        },
+                        onRetry = {
+                            retryComposeListening(contactsRepository)
+                        },
+                        onStopListening = {
+                            stopComposeListening()
+                        }
+                    )
+                }
+                
                 MainScreen(
                     smsRepository = smsRepository,
                     onPlayMessage = ::playConversation,
@@ -117,7 +144,8 @@ class MainActivity : ComponentActivity() {
                     onSendReply = ::sendReply,
                     onRetryReply = ::retryReply,
                     onDismissReply = ::dismissReplyDialog,
-                    refreshTrigger = viewModel.conversationRefreshTrigger
+                    refreshTrigger = viewModel.conversationRefreshTrigger,
+                    onCompose = { showComposeDialog() }
                 )
             }
         }
@@ -425,7 +453,7 @@ class MainActivity : ComponentActivity() {
             smsRepository.sendSms(conversation.address, message)
             
             // Speak confirmation
-            speakText("Message sent to ${conversation.contactName ?: conversation.address}")
+            speakText("Sent")
             
             // Close dialog
             viewModel.showReplyDialog = false
@@ -469,6 +497,155 @@ class MainActivity : ComponentActivity() {
     }
     
 
+    // Compose dialog methods
+    private fun showComposeDialog() {
+        viewModel.showComposeDialog = true
+        viewModel.composeTranscription = ""
+        viewModel.composeMatchedContacts = emptyList()
+        viewModel.composeRecognizerState = "Initializing..."
+        
+        // Get contacts repository for searching
+        val contactsRepository = ContactsRepository(this)
+        
+        // Start recording automatically when dialog opens
+        CoroutineScope(Dispatchers.Main).launch {
+            delay(200) // Small delay to let dialog render
+            startComposeListening(contactsRepository)
+        }
+    }
+    
+    private fun dismissComposeDialog() {
+        if (viewModel.composeIsListening) {
+            stopComposeListening()
+        }
+        viewModel.resetComposeDialog()
+    }
+    
+    private fun onComposeTextChange(text: String, contactsRepository: ContactsRepository) {
+        viewModel.composeTranscription = text
+        // Clear any error state when typing
+        if (viewModel.composeRecognizerState.startsWith("Error:")) {
+            viewModel.composeRecognizerState = "Type to search contacts"
+        }
+        searchContacts(contactsRepository)
+    }
+    
+    private fun searchContacts(contactsRepository: ContactsRepository) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val matches = contactsRepository.searchContacts(
+                query = viewModel.composeTranscription,
+                threshold = 0.2f,  // Lower threshold to catch more variations
+                maxResults = 5     // Show more results
+            )
+            withContext(Dispatchers.Main) {
+                viewModel.composeMatchedContacts = matches
+            }
+        }
+    }
+    
+    private fun onComposeContactSelect(contact: FuzzyMatcher.MatchResult) {
+        // Create a conversation object for the selected contact
+        val conversation = Conversation(
+            threadId = -1L, // We'll need to find or create the actual thread
+            address = contact.phoneNumber,
+            contactName = contact.name,
+            messageCount = 0,
+            lastMessageText = null,
+            lastMessageTime = System.currentTimeMillis(),
+            unreadCount = 0,
+            lastMessageIsOutgoing = false
+        )
+        
+        // Close compose dialog
+        viewModel.resetComposeDialog()
+        
+        // Open reply dialog with this contact
+        viewModel.currentReplyConversation = conversation
+        viewModel.replyTranscription = ""
+        viewModel.recognizerState = "Initializing..."
+        viewModel.showReplyDialog = true
+        
+        // Start recording automatically
+        CoroutineScope(Dispatchers.Main).launch {
+            startReplyRecording()
+        }
+    }
+    
+    private fun startComposeListening(contactsRepository: ContactsRepository) {
+        if (!viewModel.hasRecordPermission) {
+            viewModel.composeRecognizerState = "No microphone permission"
+            return
+        }
+        
+        // Stop any TTS that might be playing
+        tts.stop()
+        
+        viewModel.composeIsListening = true
+        viewModel.composeRecognizerState = "Listening..."
+        
+        speechRecognition.startListening(
+            onResult = { finalText ->
+                viewModel.composeTranscription = finalText
+                searchContacts(contactsRepository)
+                viewModel.composeIsListening = false
+                // Only update state if we didn't get results
+                if (viewModel.composeMatchedContacts.isEmpty()) {
+                    viewModel.composeRecognizerState = "No matches found"
+                } else {
+                    viewModel.composeRecognizerState = "Found ${viewModel.composeMatchedContacts.size} matches"
+                }
+                Log.d("MainActivity", "Compose final transcription: $finalText")
+            },
+            onPartialResult = { partialText ->
+                viewModel.composeTranscription = partialText
+                searchContacts(contactsRepository)
+                // Update state while listening
+                if (viewModel.composeMatchedContacts.isNotEmpty()) {
+                    viewModel.composeRecognizerState = "Listening... (${viewModel.composeMatchedContacts.size} matches)"
+                }
+                Log.d("MainActivity", "Compose partial transcription: $partialText")
+            },
+            onError = { error ->
+                viewModel.composeIsListening = false
+                // Only show error if it's not a "no match" error when we have results
+                if (!error.contains("no match", ignoreCase = true) || viewModel.composeMatchedContacts.isEmpty()) {
+                    viewModel.composeRecognizerState = "Error: $error"
+                } else {
+                    viewModel.composeRecognizerState = "Found ${viewModel.composeMatchedContacts.size} matches"
+                }
+                Log.e("MainActivity", "Compose recognition error: $error")
+            }
+        )
+    }
+    
+    private fun stopComposeListening() {
+        speechRecognition.stopListening()
+        viewModel.composeIsListening = false
+        viewModel.composeRecognizerState = "Ready to search contacts"
+        Log.d("MainActivity", "Stopped compose listening")
+    }
+    
+    private fun retryComposeListening(contactsRepository: ContactsRepository) {
+        // Stop current recording if active
+        if (viewModel.composeIsListening) {
+            stopComposeListening()
+            // Small delay before restarting
+            CoroutineScope(Dispatchers.Main).launch {
+                delay(200)
+                viewModel.composeTranscription = ""
+                viewModel.composeMatchedContacts = emptyList()
+                viewModel.composeRecognizerState = "Initializing..."
+                startComposeListening(contactsRepository)
+            }
+        } else {
+            // Clear transcription and start fresh
+            viewModel.composeTranscription = ""
+            viewModel.composeMatchedContacts = emptyList()
+            viewModel.composeRecognizerState = "Initializing..."
+            startComposeListening(contactsRepository)
+        }
+    }
+    
     override fun onDestroy() {
         super.onDestroy()
         // Services are cleaned up in ViewModel.onCleared()

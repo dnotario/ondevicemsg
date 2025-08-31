@@ -79,7 +79,6 @@ fun VoiceReplyDialog(
             modifier = modifier
                 .fillMaxWidth()
                 .height(380.dp) // Fixed height
-                .padding(16.dp)
                 .align(Alignment.Center)
                 .scale(dialogScale)
                 .alpha(dialogAlpha),
@@ -92,7 +91,7 @@ fun VoiceReplyDialog(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp),
+                    .padding(12.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 // Simple header
@@ -189,7 +188,7 @@ fun VoiceReplyDialog(
                     ) {
                         Text(
                             text = when {
-                                isRecording -> "Restart"
+                                isRecording -> "Re-record"
                                 editableText.isNotEmpty() -> "Re-record"
                                 else -> "Record"
                             },

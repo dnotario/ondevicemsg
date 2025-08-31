@@ -9,6 +9,7 @@ import com.dnotario.ondevicemsg.data.models.Conversation
 import com.dnotario.ondevicemsg.odm.TextToSpeech
 import com.dnotario.ondevicemsg.odm.SpeechRecognition
 import com.dnotario.ondevicemsg.odm.ImageAnalysis
+import com.dnotario.ondevicemsg.utils.FuzzyMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -59,11 +60,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Conversation refresh trigger
     var conversationRefreshTrigger by mutableStateOf(0)
     
+    // Compose dialog state
+    var showComposeDialog by mutableStateOf(false)
+    var composeTranscription by mutableStateOf("")
+    var composeMatchedContacts by mutableStateOf<List<FuzzyMatcher.MatchResult>>(emptyList())
+    var composeIsListening by mutableStateOf(false)
+    var composeRecognizerState by mutableStateOf("Idle")
+    
     fun resetReplyDialog() {
         showReplyDialog = false
         replyTranscription = ""
         currentReplyConversation = null
         recognizerState = "Idle"
+    }
+    
+    fun resetComposeDialog() {
+        showComposeDialog = false
+        composeTranscription = ""
+        composeMatchedContacts = emptyList()
+        composeRecognizerState = "Idle"
+        composeIsListening = false
     }
     
     fun stopPlayback() {

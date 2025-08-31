@@ -3,6 +3,7 @@ package com.dnotario.ondevicemsg.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Message
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -37,7 +38,8 @@ fun MainScreen(
     onSendReply: (String) -> Unit,
     onRetryReply: () -> Unit,
     onDismissReply: () -> Unit,
-    refreshTrigger: Int = 0
+    refreshTrigger: Int = 0,
+    onCompose: () -> Unit
 ) {
     val navController = rememberNavController()
     val items = listOf(Screen.Messages)
@@ -56,8 +58,20 @@ fun MainScreen(
                 )
         ) {
             Scaffold(
-        // No bottom bar needed with single screen
-    ) { innerPadding ->
+                floatingActionButton = {
+                    if (hasSmsPermissions) {
+                        FloatingActionButton(
+                            onClick = onCompose,
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Compose"
+                            )
+                        }
+                    }
+                }
+            ) { innerPadding ->
         NavHost(
             navController = navController,
             startDestination = Screen.Messages.route,
