@@ -105,7 +105,8 @@ fun MainScreen(
                 recognizerState = recognizerState,
                 onSend = onSendReply,
                 onRetry = onRetryReply,
-                onDismiss = onDismissReply
+                onDismiss = onDismissReply,
+                onStopRecording = onRetryReply // Will stop if recording
             )
         }
     } // Close outer Box

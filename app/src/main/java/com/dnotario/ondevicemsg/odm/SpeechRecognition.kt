@@ -92,7 +92,25 @@ class SpeechRecognition(private val context: Context) {
         recognizer?.stopListening()
         _isListening.value = false
         _state.value = RecognitionState.Idle
+        // Clear callbacks to prevent leaks
+        onResultCallback = null
+        onPartialResultCallback = null
+        onErrorCallback = null
         Log.d(TAG, "Stopped listening")
+    }
+    
+    /**
+     * Cancel listening immediately
+     */
+    fun cancelListening() {
+        recognizer?.cancel()
+        _isListening.value = false
+        _state.value = RecognitionState.Idle
+        // Clear callbacks to prevent leaks
+        onResultCallback = null
+        onPartialResultCallback = null
+        onErrorCallback = null
+        Log.d(TAG, "Cancelled listening")
     }
     
     /**

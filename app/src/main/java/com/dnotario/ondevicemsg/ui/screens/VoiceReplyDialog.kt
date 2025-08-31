@@ -5,6 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -17,6 +25,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 
 @Composable
 fun VoiceReplyDialog(
@@ -28,10 +39,13 @@ fun VoiceReplyDialog(
     onSend: (String) -> Unit,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
+    onStopRecording: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var editableText by remember(transcribedText) { mutableStateOf(transcribedText) }
     var visible by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val textFieldFocusRequester = remember { FocusRequester() }
     
     // Trigger animation on first composition
     LaunchedEffect(Unit) {
@@ -74,14 +88,21 @@ fun VoiceReplyDialog(
                 )
         )
         
-        // Dialog card with animations
-        Card(
-            modifier = modifier
-                .fillMaxWidth()
-                .height(380.dp) // Fixed height
-                .align(Alignment.Center)
-                .scale(dialogScale)
-                .alpha(dialogAlpha),
+        // Container that handles keyboard and status bar padding
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding() // Respect status bar
+                .imePadding(), // Push up with keyboard
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp) // Slightly smaller to fit better
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .scale(dialogScale)
+                    .alpha(dialogAlpha),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface
@@ -126,17 +147,24 @@ fun VoiceReplyDialog(
                 // Editable text field
                 OutlinedTextField(
                     value = editableText,
-                    onValueChange = { editableText = it },
+                    onValueChange = { 
+                        editableText = it
+                        // Stop recording if user starts typing
+                        if (isRecording) {
+                            onStopRecording()
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f), // Take available space
+                        .weight(1f) // Take available space
+                        .focusRequester(textFieldFocusRequester),
                     placeholder = {
                         Text(
                             text = "Your message",
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                         )
                     },
-                    enabled = !isRecording,
+                    enabled = true, // Always enabled to allow editing
                     colors = OutlinedTextFieldDefaults.colors(
                         disabledTextColor = MaterialTheme.colorScheme.onSurface,
                         disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
@@ -182,16 +210,25 @@ fun VoiceReplyDialog(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onRetry,
+                        onClick = {
+                            // Dismiss keyboard when starting recording
+                            if (!isRecording) {
+                                focusManager.clearFocus()
+                            }
+                            onRetry()
+                        },
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(vertical = 14.dp)
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        colors = if (isRecording) {
+                            ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            ButtonDefaults.outlinedButtonColors()
+                        }
                     ) {
                         Text(
-                            text = when {
-                                isRecording -> "Re-record"
-                                editableText.isNotEmpty() -> "Re-record"
-                                else -> "Record"
-                            },
+                            text = if (isRecording) "Stop" else "Record",
                             style = MaterialTheme.typography.labelLarge
                         )
                     }
@@ -214,5 +251,6 @@ fun VoiceReplyDialog(
                 }
             }
         }
-    }
+        } // Close centering Box
+    } // Close outer Box
 }

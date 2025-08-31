@@ -488,10 +488,13 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun dismissReplyDialog() {
-        // Stop recording if active
-        if (viewModel.isListening) {
-            stopListening()
-        }
+        // Cancel speech recognition immediately
+        speechRecognition.cancelListening()
+        viewModel.isListening = false
+        
+        // Clear transcription and state
+        viewModel.replyTranscription = ""
+        viewModel.recognizerState = "Idle"
         
         viewModel.resetReplyDialog()
     }
@@ -515,9 +518,10 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun dismissComposeDialog() {
-        if (viewModel.composeIsListening) {
-            stopComposeListening()
-        }
+        // Cancel any ongoing speech recognition immediately
+        speechRecognition.cancelListening()
+        viewModel.composeIsListening = false
+        viewModel.composeRecognizerState = "Idle"
         viewModel.resetComposeDialog()
     }
     
@@ -544,6 +548,13 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun onComposeContactSelect(contact: FuzzyMatcher.MatchResult) {
+        // Cancel compose listening immediately if active
+        if (viewModel.composeIsListening) {
+            speechRecognition.cancelListening()
+            viewModel.composeIsListening = false
+            viewModel.composeRecognizerState = "Idle"
+        }
+        
         // Create a conversation object for the selected contact
         val conversation = Conversation(
             threadId = -1L, // We'll need to find or create the actual thread
@@ -556,17 +567,22 @@ class MainActivity : ComponentActivity() {
             lastMessageIsOutgoing = false
         )
         
-        // Close compose dialog
+        // Close compose dialog and clear state
         viewModel.resetComposeDialog()
+        
+        // Clear any previous reply state completely
+        viewModel.replyTranscription = ""
+        viewModel.recognizerState = "Idle"
+        viewModel.isListening = false
         
         // Open reply dialog with this contact
         viewModel.currentReplyConversation = conversation
-        viewModel.replyTranscription = ""
-        viewModel.recognizerState = "Initializing..."
         viewModel.showReplyDialog = true
         
-        // Start recording automatically
+        // Start recording automatically after a longer delay
         CoroutineScope(Dispatchers.Main).launch {
+            delay(500) // Give more time for cleanup and dialog transition
+            viewModel.recognizerState = "Initializing..."
             startReplyRecording()
         }
     }

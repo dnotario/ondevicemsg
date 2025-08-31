@@ -31,6 +31,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 
 @Composable
 fun ComposeDialog(
@@ -44,6 +49,8 @@ fun ComposeDialog(
     onRetry: () -> Unit,
     onStopListening: () -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
+    val textFieldFocusRequester = remember { FocusRequester() }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -55,7 +62,9 @@ fun ComposeDialog(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.9f), // Take 90% of screen height
+                .fillMaxHeight(0.9f) // Take 90% of screen height
+                .imePadding() // Adjust for keyboard
+                .navigationBarsPadding(),
             shape = RoundedCornerShape(28.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface
@@ -92,8 +101,16 @@ fun ComposeDialog(
                 // Text input field with simple keyboard
                 OutlinedTextField(
                     value = transcription,
-                    onValueChange = onTextChange,
-                    modifier = Modifier.fillMaxWidth(),
+                    onValueChange = { text ->
+                        onTextChange(text)
+                        // Stop listening if user starts typing
+                        if (isListening) {
+                            onStopListening()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(textFieldFocusRequester),
                     label = { Text("Search contacts") },
                     placeholder = { Text("Type or speak contact name...") },
                     singleLine = true,
@@ -224,7 +241,15 @@ fun ComposeDialog(
                     contentAlignment = Alignment.Center
                 ) {
                     OutlinedButton(
-                        onClick = if (isListening) onStopListening else onRetry,
+                        onClick = {
+                            if (isListening) {
+                                onStopListening()
+                            } else {
+                                // Dismiss keyboard when starting voice search
+                                focusManager.clearFocus()
+                                onRetry()
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth(0.6f)
                             .height(48.dp),
