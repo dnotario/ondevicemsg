@@ -25,6 +25,7 @@ import com.dnotario.ondevicemsg.utils.FuzzyMatcher
 import com.dnotario.ondevicemsg.odm.TextToSpeech
 import com.dnotario.ondevicemsg.odm.SpeechRecognition
 import com.dnotario.ondevicemsg.odm.ImageAnalysis
+import com.dnotario.ondevicemsg.odm.SmartReplyGenerator
 import com.dnotario.ondevicemsg.odm.RecognitionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +47,8 @@ class MainActivity : ComponentActivity() {
         get() = viewModel.speechRecognition
     private val imageAnalysis: ImageAnalysis
         get() = viewModel.imageAnalysis
+    private val smartReplyGenerator: SmartReplyGenerator
+        get() = viewModel.smartReplyGenerator
     
 
     private val requestPermissionLauncher = registerForActivityResult(
@@ -141,6 +144,8 @@ class MainActivity : ComponentActivity() {
                     showReplyDialog = viewModel.showReplyDialog,
                     replyTranscription = viewModel.replyTranscription,
                     currentReplyConversation = viewModel.currentReplyConversation,
+                    smartReplies = viewModel.smartReplies,
+                    isLoadingSmartReplies = viewModel.isLoadingSmartReplies,
                     onSendReply = ::sendReply,
                     onRetryReply = ::retryReply,
                     onDismissReply = ::dismissReplyDialog,
@@ -292,7 +297,7 @@ class MainActivity : ComponentActivity() {
                             
                             // Speak the image description first
                             if (!description.isNullOrEmpty()) {
-                                speakText("The image shows: $description")
+                                speakText(description)
                                 
                                 // Wait for image description to finish
                                 while (tts.isSpeaking.value && isActive) {
@@ -418,10 +423,83 @@ class MainActivity : ComponentActivity() {
         viewModel.replyTranscription = ""
         viewModel.recognizerState = "Initializing..."
         viewModel.showReplyDialog = true
+        viewModel.smartReplies = emptyList()
+        viewModel.isLoadingSmartReplies = true
+        
+        // Generate smart replies based on conversation history
+        CoroutineScope(Dispatchers.IO).launch {
+            generateSmartReplies(conversation)
+        }
         
         // Start recording automatically when dialog opens
         CoroutineScope(Dispatchers.Main).launch {
             startReplyRecording()
+        }
+    }
+    
+    private suspend fun generateSmartReplies(conversation: Conversation) {
+        try {
+            Log.d("MainActivity", "Generating smart replies for conversation with ${conversation.contactName ?: conversation.address}")
+            
+            // Get recent messages from the conversation
+            val smsRepository = SmsRepository(this)
+            val messages = smsRepository.getMessagesForConversation(conversation.threadId)
+                .sortedBy { it.date } // Ensure chronological order
+                .takeLast(10) // Get last 10 messages
+            
+            Log.d("MainActivity", "Found ${messages.size} messages for conversation")
+            
+            if (messages.isEmpty()) {
+                Log.d("MainActivity", "No messages found for smart reply generation")
+                CoroutineScope(Dispatchers.Main).launch {
+                    viewModel.smartReplies = emptyList()
+                    viewModel.isLoadingSmartReplies = false
+                }
+                return
+            }
+            
+            // Convert to SmartReplyGenerator format
+            val messageData = messages.map { msg ->
+                SmartReplyGenerator.MessageData(
+                    text = msg.body,
+                    timestamp = msg.date,
+                    isOutgoing = msg.isOutgoing
+                )
+            }
+            
+            // Check if last message is from remote user (required for smart reply)
+            val lastMessage = messageData.lastOrNull()
+            if (lastMessage?.isOutgoing == true) {
+                Log.d("MainActivity", "Last message is outgoing - smart reply won't generate suggestions")
+                // Smart reply only works when last message is from the other person
+                CoroutineScope(Dispatchers.Main).launch {
+                    viewModel.smartReplies = emptyList()
+                    viewModel.isLoadingSmartReplies = false
+                }
+                return
+            }
+            
+            Log.d("MainActivity", "Calling smart reply generator with ${messageData.size} messages")
+            
+            // Generate smart replies
+            val replies = smartReplyGenerator.generateReplies(
+                messages = messageData,
+                remoteUserId = conversation.address
+            )
+            
+            Log.d("MainActivity", "Smart reply generator returned ${replies.size} suggestions")
+            
+            // Update UI on main thread
+            CoroutineScope(Dispatchers.Main).launch {
+                viewModel.smartReplies = replies
+                viewModel.isLoadingSmartReplies = false
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error generating smart replies", e)
+            CoroutineScope(Dispatchers.Main).launch {
+                viewModel.smartReplies = emptyList()
+                viewModel.isLoadingSmartReplies = false
+            }
         }
     }
     
@@ -574,6 +652,8 @@ class MainActivity : ComponentActivity() {
         viewModel.replyTranscription = ""
         viewModel.recognizerState = "Idle"
         viewModel.isListening = false
+        viewModel.smartReplies = emptyList()
+        viewModel.isLoadingSmartReplies = false
         
         // Open reply dialog with this contact
         viewModel.currentReplyConversation = conversation

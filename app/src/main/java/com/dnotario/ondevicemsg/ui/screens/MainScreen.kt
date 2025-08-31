@@ -35,6 +35,8 @@ fun MainScreen(
     showReplyDialog: Boolean,
     replyTranscription: String,
     currentReplyConversation: Conversation?,
+    smartReplies: List<String> = emptyList(),
+    isLoadingSmartReplies: Boolean = false,
     onSendReply: (String) -> Unit,
     onRetryReply: () -> Unit,
     onDismissReply: () -> Unit,
@@ -62,7 +64,8 @@ fun MainScreen(
                     if (hasSmsPermissions) {
                         FloatingActionButton(
                             onClick = onCompose,
-                            containerColor = MaterialTheme.colorScheme.primary
+                            containerColor = MaterialTheme.colorScheme.tertiary,
+                            contentColor = MaterialTheme.colorScheme.onTertiary
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Add,
@@ -103,6 +106,8 @@ fun MainScreen(
                 isRecording = isRecording,
                 transcribedText = replyTranscription,
                 recognizerState = recognizerState,
+                smartReplies = smartReplies,
+                isLoadingSmartReplies = isLoadingSmartReplies,
                 onSend = onSendReply,
                 onRetry = onRetryReply,
                 onDismiss = onDismissReply,

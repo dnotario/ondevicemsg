@@ -9,6 +9,7 @@ import com.dnotario.ondevicemsg.data.models.Conversation
 import com.dnotario.ondevicemsg.odm.TextToSpeech
 import com.dnotario.ondevicemsg.odm.SpeechRecognition
 import com.dnotario.ondevicemsg.odm.ImageAnalysis
+import com.dnotario.ondevicemsg.odm.SmartReplyGenerator
 import com.dnotario.ondevicemsg.utils.FuzzyMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +25,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val tts = TextToSpeech(application)
     val speechRecognition = SpeechRecognition(application)
     val imageAnalysis = ImageAnalysis(application)
+    val smartReplyGenerator = SmartReplyGenerator()
     
     private var servicesInitialized = false
     
@@ -47,6 +49,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var showReplyDialog by mutableStateOf(false)
     var replyTranscription by mutableStateOf("")
     var currentReplyConversation by mutableStateOf<Conversation?>(null)
+    var smartReplies by mutableStateOf<List<String>>(emptyList())
+    var isLoadingSmartReplies by mutableStateOf(false)
     
     // Recognition state
     var isListening by mutableStateOf(false)
@@ -71,6 +75,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showReplyDialog = false
         replyTranscription = ""
         currentReplyConversation = null
+        smartReplies = emptyList()
+        isLoadingSmartReplies = false
         recognizerState = "Idle"
     }
     

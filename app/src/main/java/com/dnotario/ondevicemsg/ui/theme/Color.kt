@@ -2,20 +2,27 @@ package com.dnotario.ondevicemsg.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Android Auto Coolwalk inspired colors
-val Primary = Color(0xFF4285F4)  // Google Blue
-val PrimaryVariant = Color(0xFF1967D2)
-val Secondary = Color(0xFF34A853)  // Google Green
-val Background = Color(0xFF000000)  // Pure black
-val Surface = Color(0xFF1A1A1A)  // Dark grey for cards
-val SurfaceVariant = Color(0xFF2D2D2D)  // Slightly lighter grey
-val OnPrimary = Color(0xFFFFFFFF)
-val OnSecondary = Color(0xFFFFFFFF)
-val OnBackground = Color(0xFFE8EAED)  // Light grey text
-val OnSurface = Color(0xFFE8EAED)
-val OnSurfaceVariant = Color(0xFF9AA0A6)  // Dimmer text
+// Sunset Mountain palette colors
+val Primary = Color(0xFFB5697C)  // Mauve/Rose from middle swatch
+val PrimaryVariant = Color(0xFF8B4F6B)  // Deeper mauve
+val PrimaryContainer = Color(0xFF4A3651)  // Deep purple from second swatch
+val Secondary = Color(0xFFD08370)  // Coral/Salmon from fourth swatch
+val SecondaryContainer = Color(0xFF6B4A5C)  // Muted purple-brown
+val Tertiary = Color(0xFFC89087)  // Light coral from fifth swatch
+val Background = Color(0xFF1C1823)  // Very dark purple from first swatch
+val Surface = Color(0xFF2E2837)  // Dark purple surface
+val SurfaceVariant = Color(0xFF453D4A)  // Medium purple for elevated surfaces
+val Error = Color(0xFFE57373)  // Soft red for errors
+val OnPrimary = Color(0xFFFFFFFF)  // White on primary colors
+val OnSecondary = Color(0xFFFFFFFF)  // White on secondary
+val OnTertiary = Color(0xFFFFFFFF)
+val OnBackground = Color(0xFFF5E6E8)  // Light pink-white for text
+val OnSurface = Color(0xFFF5E6E8)  // Light pink-white for text
+val OnSurfaceVariant = Color(0xFFD0B3B8)  // Muted pink-grey for secondary text
+val OnError = Color(0xFFFFFFFF)
+val Outline = Color(0xFF6B5D6E)  // Purple-grey for borders
 
-// Legacy colors for compatibility
+// Legacy colors for compatibility (using new theme)
 val Purple80 = Primary
 val PurpleGrey80 = OnSurfaceVariant
 val Pink80 = Secondary

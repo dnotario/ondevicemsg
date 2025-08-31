@@ -61,4 +61,7 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    
+    // ML Kit Smart Reply
+    implementation("com.google.mlkit:smart-reply:17.0.4")
 }

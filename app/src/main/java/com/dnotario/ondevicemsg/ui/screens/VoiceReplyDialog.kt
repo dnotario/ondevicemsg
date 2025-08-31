@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -36,6 +37,8 @@ fun VoiceReplyDialog(
     isRecording: Boolean,
     transcribedText: String,
     recognizerState: String,
+    smartReplies: List<String> = emptyList(),
+    isLoadingSmartReplies: Boolean = false,
     onSend: (String) -> Unit,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
@@ -46,6 +49,12 @@ fun VoiceReplyDialog(
     var visible by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val textFieldFocusRequester = remember { FocusRequester() }
+    
+    // Detect if keyboard is visible
+    val imeInsets = WindowInsets.ime
+    val density = LocalDensity.current
+    val keyboardHeight = with(density) { imeInsets.getBottom(this).toDp() }
+    val isKeyboardVisible = keyboardHeight > 0.dp
     
     // Trigger animation on first composition
     LaunchedEffect(Unit) {
@@ -173,6 +182,76 @@ fun VoiceReplyDialog(
                     textStyle = MaterialTheme.typography.bodyLarge,
                     maxLines = 8
                 )
+                
+                // Add consistent spacing after text field
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Smart reply suggestions (hidden when keyboard is visible)
+                if (!isKeyboardVisible) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        when {
+                            isLoadingSmartReplies -> {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Generating suggested replies...",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    )
+                                }
+                            }
+                            smartReplies.isNotEmpty() -> {
+                                smartReplies.forEach { reply ->
+                                    OutlinedButton(
+                                        onClick = { 
+                                            // Send immediately
+                                            onSend(reply)
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f),
+                                            contentColor = MaterialTheme.colorScheme.primary
+                                        )
+                                    ) {
+                                        Text(
+                                            text = reply,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                            else -> {
+                                // Show "No reply suggestions" when not loading
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "No reply suggestions",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Add spacing before status line
+                Spacer(modifier = Modifier.height(12.dp))
                 
                 // Single status line (fixed height)
                 Box(
